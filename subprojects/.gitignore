@@ -1,0 +1,24 @@
+# NOTE: Upstream ignores every wrap-fetched subproject here (with a `/*/*`
+# pattern plus one line per directory), because it re-fetches them from their
+# wraps at build time. This port tracks them instead, for two reasons:
+#
+#   1. Two of them are patched. `vst3` is SDK 3.8.0 with the Haiku platform port
+#      and the Winelib fixes already applied (its wrap, which pointed at a stock
+#      3.7.7, has been deleted). `ghc_filesystem` has a one-hunk fix so it picks
+#      POSIX mode instead of Windows mode under winegcc. Neither survives a
+#      re-fetch, so neither can be left untracked.
+#   2. Builds happen on the Haiku laptop, which should not have to reach the
+#      network to clone six git repositories mid-build. Tracking them keeps a
+#      fresh checkout buildable offline.
+#
+# Consequently `meson subprojects update` must not be run against these -- it
+# would discard the patches. Re-vendor deliberately instead.
+#
+# The upstream pattern is inverted here rather than negated, because `/*/*`
+# excludes the subdirectories themselves and git cannot re-include a file whose
+# parent directory is excluded.
+
+# Meson's download cache, and asio, which comes from `pkgman install asio`
+# rather than from its wrap on this platform.
+/packagecache/
+/asio/

@@ -1,0 +1,22 @@
+# Local-only agent guidance (not published; comments in tracked files must not
+# reference these)
+CLAUDE.md
+RULES.md
+task.md
+PLAN.md
+.claude/
+prompt
+
+# Build artifacts
+build/
+*.o
+*.d
+*.so
+*.exe
+*.exe.so
+subprojects/packagecache/
+
+# Editor / OS noise
+*~
+*.swp
+.DS_Store
