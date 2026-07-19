@@ -18,7 +18,11 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
+#ifdef __linux__
+// `FICLONE` is Linux-only. `copy_or_reflink()` already guards its use on the
+// macro being defined, so elsewhere it just falls back to a regular copy.
 #include <linux/fs.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
