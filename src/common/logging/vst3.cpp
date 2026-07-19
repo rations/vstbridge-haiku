@@ -552,7 +552,7 @@ bool Vst3Logger::log_request(
         message << request.owner_instance_id
                 << ": IPlugView::isPLatformTypeSupported(type = \""
                 << request.type;
-        if (request.type == Steinberg::kPlatformTypeX11EmbedWindowID) {
+        if (request.type == native_platform_type()) {
             message << "\" (will be translated to \""
                     << Steinberg::kPlatformTypeHWND << "\")";
         } else {
@@ -568,7 +568,7 @@ bool Vst3Logger::log_request(bool is_host_plugin,
         message << request.owner_instance_id
                 << ": IPlugView::attached(parent = " << request.parent
                 << ", type = \"" << request.type;
-        if (request.type == Steinberg::kPlatformTypeX11EmbedWindowID) {
+        if (request.type == native_platform_type()) {
             message << "\" (will be translated to \""
                     << Steinberg::kPlatformTypeHWND << "\")";
         } else {

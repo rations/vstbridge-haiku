@@ -27,6 +27,33 @@
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
 
 /**
+ * The platform type the *native* host speaks. A Windows VST3 plugin only ever
+ * understands `kPlatformTypeHWND`, so every platform type crossing the bridge
+ * is translated to and from this one.
+ *
+ * On Haiku the host hands out a `BView*` rather than an X11 window ID. Note
+ * that in phase 1 nothing is embedded into it: cross-team `BView` embedding is
+ * impossible (see the comments at the top of `wine-host/editor-haiku.h`), so
+ * the parent is accepted and ignored, and the editor opens as its own
+ * top-level window. Advertising the type the host expects still matters,
+ * because a host that gets `isPlatformTypeSupported` answered for a type it
+ * did not ask about will not open the editor at all.
+ *
+ * This is a function rather than a constant because the SDK declares these as
+ * `const FIDString` (i.e. `const char* const`), which is const but not
+ * `constexpr`, so its value cannot initialize a `constexpr` variable. An
+ * `inline` function also avoids giving every translation unit that includes
+ * this header its own copy.
+ */
+inline const char* native_platform_type() noexcept {
+#ifdef __HAIKU__
+    return Steinberg::kPlatformTypeHaikuBView;
+#else
+    return Steinberg::kPlatformTypeX11EmbedWindowID;
+#endif
+}
+
+/**
  * Wraps around `IPlugView` for serialization purposes. This is instantiated as
  * part of `Vst3PlugViewProxy`.
  */

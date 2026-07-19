@@ -770,13 +770,12 @@ void Vst3Bridge::run() {
                 const auto& [instance, _] =
                     get_instance(request.owner_instance_id);
 
-                // The host will of course want to pass an X11 window ID for the
-                // plugin to embed itself in, so we'll have to translate this to
-                // a HWND
-                const std::string type =
-                    request.type == Steinberg::kPlatformTypeX11EmbedWindowID
-                        ? Steinberg::kPlatformTypeHWND
-                        : request.type;
+                // The host will of course want to pass its own native handle
+                // for the plugin to embed itself in, so we'll have to translate
+                // this to a HWND
+                const std::string type = request.type == native_platform_type()
+                                             ? Steinberg::kPlatformTypeHWND
+                                             : request.type;
 
                 return instance.plug_view_instance->plug_view
                     ->isPlatformTypeSupported(type.c_str());
@@ -786,14 +785,16 @@ void Vst3Bridge::run() {
                 const auto& [instance, _] =
                     get_instance(request.owner_instance_id);
 
-                const std::string type =
-                    request.type == Steinberg::kPlatformTypeX11EmbedWindowID
-                        ? Steinberg::kPlatformTypeHWND
-                        : request.type;
+                const std::string type = request.type == native_platform_type()
+                                             ? Steinberg::kPlatformTypeHWND
+                                             : request.type;
 
                 // Just like with VST2 plugins, we'll embed a Wine window into
-                // the X11 window provided by the host
-                const auto x11_handle = static_cast<size_t>(request.parent);
+                // the window provided by the host. On Haiku there is no
+                // embedding and `Editor` ignores this handle entirely, but it
+                // is still passed through unchanged so the two editor
+                // implementations keep the same constructor signature.
+                const auto parent_handle = static_cast<size_t>(request.parent);
 
                 // Creating the window and having the plugin embed in it should
                 // be done in the main UI thread
@@ -801,7 +802,7 @@ void Vst3Bridge::run() {
                     .run_in_context([&, &instance = instance]() -> tresult {
                         Editor& editor_instance = instance.editor.emplace(
                             main_context_, config_, generic_logger_,
-                            x11_handle);
+                            parent_handle);
                         const tresult result =
                             instance.plug_view_instance->plug_view->attached(
                                 editor_instance.win32_handle(), type.c_str());
