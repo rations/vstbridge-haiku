@@ -44,7 +44,7 @@ std::string format_bstream(const YaBStream& stream) {
     }
     if (stream.file_name_) {
         formatted << "for \""
-                  << VST3::StringConvert::convert(*stream.file_name_) << "\" ";
+                  << Steinberg::Vst::StringConvert::convert(*stream.file_name_) << "\" ";
     }
     formatted << "containing " << stream.size() << " bytes>";
 
@@ -256,7 +256,7 @@ bool Vst3Logger::log_request(
     bool is_host_plugin,
     const YaEditController::GetParamValueByString& request) {
     return log_request_base(is_host_plugin, [&](auto& message) {
-        std::string param_title = VST3::StringConvert::convert(request.string);
+        std::string param_title = Steinberg::Vst::StringConvert::convert(request.string);
         message << request.instance_id
                 << ": IEditController::getParamValueByString(id = "
                 << request.id << ", string = \"" << param_title
@@ -492,7 +492,7 @@ bool Vst3Logger::log_request(
                    "busIndex = "
                 << request.bus_index << ", channel = " << request.channel
                 << ", id = " << request.id << ", string = \""
-                << VST3::StringConvert::convert(request.string)
+                << Steinberg::Vst::StringConvert::convert(request.string)
                 << "\", &valueNormalized)";
     });
 }
@@ -1267,7 +1267,7 @@ bool Vst3Logger::log_request(bool is_host_plugin,
         message << request.owner_instance_id << ": <IContextMenu* #"
                 << request.context_menu_id
                 << ">::addItem(item = <IContextMenuItem #" << request.item.tag
-                << " for \"" << VST3::StringConvert::convert(request.item.name)
+                << " for \"" << Steinberg::Vst::StringConvert::convert(request.item.name)
                 << "\">, target)";
     });
 }
@@ -1279,7 +1279,7 @@ bool Vst3Logger::log_request(bool is_host_plugin,
                 << request.context_menu_id
                 << ">::removeItem(item = <IContextMenuItem #"
                 << request.item.tag << " for \""
-                << VST3::StringConvert::convert(request.item.name)
+                << Steinberg::Vst::StringConvert::convert(request.item.name)
                 << "\">, target)";
     });
 }
@@ -1343,7 +1343,7 @@ bool Vst3Logger::log_request(bool is_host_plugin,
                 << ", optionalDescription = ";
         if (request.optional_description) {
             message << "\""
-                    << VST3::StringConvert::convert(
+                    << Steinberg::Vst::StringConvert::convert(
                            *request.optional_description)
                     << "\"";
         } else {
@@ -1485,7 +1485,7 @@ void Vst3Logger::log_response(
     log_response_base(is_host_plugin, [&](auto& message) {
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
-            std::string value = VST3::StringConvert::convert(response.string);
+            std::string value = Steinberg::Vst::StringConvert::convert(response.string);
             message << ", \"" << value << "\"";
         }
     });
@@ -1521,7 +1521,7 @@ void Vst3Logger::log_response(
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", <KeyswitchInfo for \""
-                    << VST3::StringConvert::convert(response.info.title)
+                    << Steinberg::Vst::StringConvert::convert(response.info.title)
                     << "\">";
         }
     });
@@ -1545,7 +1545,7 @@ void Vst3Logger::log_response(
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", <NoteExpressionTypeInfo for \""
-                    << VST3::StringConvert::convert(response.info.title)
+                    << Steinberg::Vst::StringConvert::convert(response.info.title)
                     << "\">";
         }
     });
@@ -1558,7 +1558,7 @@ void Vst3Logger::log_response(
     log_response_base(is_host_plugin, [&](auto& message) {
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
-            message << ", \"" << VST3::StringConvert::convert(response.string)
+            message << ", \"" << Steinberg::Vst::StringConvert::convert(response.string)
                     << "\"";
         }
     });
@@ -1678,7 +1678,7 @@ void Vst3Logger::log_response(bool is_host_plugin,
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", <UnitInfo for \""
-                    << VST3::StringConvert::convert(response.info.name)
+                    << Steinberg::Vst::StringConvert::convert(response.info.name)
                     << "\">";
         }
     });
@@ -1691,7 +1691,7 @@ void Vst3Logger::log_response(
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", <ProgramListInfo for \""
-                    << VST3::StringConvert::convert(response.info.name)
+                    << Steinberg::Vst::StringConvert::convert(response.info.name)
                     << "\">";
         }
     });
@@ -1703,7 +1703,7 @@ void Vst3Logger::log_response(
     log_response_base(is_host_plugin, [&](auto& message) {
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
-            message << ", \"" << VST3::StringConvert::convert(response.name)
+            message << ", \"" << Steinberg::Vst::StringConvert::convert(response.name)
                     << "\"";
         }
     });
@@ -1716,7 +1716,7 @@ void Vst3Logger::log_response(
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", \""
-                    << VST3::StringConvert::convert(response.attribute_value)
+                    << Steinberg::Vst::StringConvert::convert(response.attribute_value)
                     << "\"";
         }
     });
@@ -1728,7 +1728,7 @@ void Vst3Logger::log_response(
     log_response_base(is_host_plugin, [&](auto& message) {
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
-            message << ", \"" << VST3::StringConvert::convert(response.name)
+            message << ", \"" << Steinberg::Vst::StringConvert::convert(response.name)
                     << "\"";
         }
     });
@@ -1845,7 +1845,7 @@ void Vst3Logger::log_response(bool is_host_plugin,
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
             message << ", <BusInfo for \""
-                    << VST3::StringConvert::convert(response.bus.name)
+                    << Steinberg::Vst::StringConvert::convert(response.bus.name)
                     << "\" with " << response.bus.channelCount
                     << " channels, type = " << response.bus.busType
                     << ", flags = " << response.bus.flags << ">";
@@ -1911,7 +1911,7 @@ void Vst3Logger::log_response(
     log_response_base(is_host_plugin, [&](auto& message) {
         message << response.result.string();
         if (response.result == Steinberg::kResultOk) {
-            std::string value = VST3::StringConvert::convert(response.name);
+            std::string value = Steinberg::Vst::StringConvert::convert(response.name);
             message << ", \"" << value << "\"";
         }
     });
