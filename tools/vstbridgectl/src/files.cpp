@@ -84,11 +84,20 @@ fs::path Vst3Module::target_bundle_home() const {
 fs::path Vst3Module::target_native_module_path(const VstbridgeFiles* files) const {
     auto name = fs::path(original_module_name()).replace_extension(".so");
     auto base = target_bundle_home() / "Contents";
+#ifdef __HAIKU__
+    // The architecture subfolder is the host OS's, not the bridged plugin's.
+    // Haiku's SDK builds it from `uname -m` + "-haiku" (module_haiku.cpp
+    // `getSOPath`), which is `x86_64-haiku` on the only architecture Wine
+    // runs on here. There is no 32-bit Haiku Wine to pair with `i386-linux`.
+    (void)files;
+    return base / "x86_64-haiku" / name;
+#else
     if (files && files->vst3_chainloader) {
         if (files->vst3_chainloader->second == LibArchitecture::Lib32)
             return base / "i386-linux" / name;
     }
     return base / "x86_64-linux" / name;
+#endif
 }
 
 fs::path Vst3Module::target_windows_module_path() const {

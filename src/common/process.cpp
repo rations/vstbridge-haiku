@@ -19,12 +19,38 @@
 #include <cassert>
 #include <iostream>
 
+#include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
+
+#if defined(__HAIKU__) && !defined(__WINE__)
+#include <OS.h>
+#endif
 
 namespace fs = ghc::filesystem;
 
 bool pid_running(pid_t pid) {
+    // Haiku has no `/proc` at all, so the symlink probe below reports *every*
+    // process as dead. That is not a subtle failure: the plugin-side host
+    // watchdog calls `std::terminate()` the moment it believes the Wine host
+    // died, so the bridge killed its own DAW ~20ms after starting, and took
+    // the orphaned Wine session with it (well, left it running, in fact).
+#ifdef __HAIKU__
+#ifndef __WINE__
+    // A Haiku `team_id` is the same thing as a `pid_t`. This is the precise
+    // check the comment below asks for -- the kernel reports `B_BAD_TEAM_ID`
+    // once a team is gone, so it does not confuse a zombie for a live process.
+    team_info info;
+    return get_team_info(static_cast<team_id>(pid), &info) == B_OK;
+#else
+    // The Wine host compiles this same file under winegcc, which defines both
+    // `__HAIKU__` and `_WIN32`. Pulling in Haiku's `<OS.h>` there collides with
+    // the Win32 headers (the same trap `ghc_filesystem` fell into), so use
+    // plain POSIX. This does inherit the zombie caveat described below.
+    return kill(pid, 0) == 0 || errno == EPERM;
+#endif
+#else
     // In theory you could `kill(0)` a process to check if it's still active,
     // but that doesn't distinguish between actually running processes and
     // unreaped zombies, and terminated group host processes will always be left
@@ -38,6 +64,7 @@ bool pid_running(pid_t pid) {
     //       this process's memory. This does mean that the process is still
     //       running.
     return !err || err.value() == EACCES;
+#endif
 }
 
 std::vector<fs::path> get_augmented_search_path() {
@@ -245,6 +272,38 @@ std::optional<int> Process::Handle::wait() const noexcept {
     }
 }
 
+/**
+ * Queue closes for every non-STDIO file descriptor, so the child does not
+ * inherit ours. See the call sites for why this is done instead of `vfork()`.
+ */
+static void add_close_non_stdio_fds(posix_spawn_file_actions_t& actions) {
+#if (__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34)
+    posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1);
+#else
+    // POSIX says a file action that fails fails the entire `posix_spawn()`, and
+    // closing a descriptor that was never open returns `EBADF`. glibc and musl
+    // let that slide, but Haiku propagates it, so queueing a close for every fd
+    // up to `_SC_OPEN_MAX` makes *every* spawn fail with "Bad file descriptor".
+    // Haiku has no `addclosefrom_np` either -- it implements only the four
+    // standard actions -- so probe each fd and queue closes only for the ones
+    // actually open. Same end state as the glibc branch, reached the long way.
+    long open_max = sysconf(_SC_OPEN_MAX);
+    if (open_max < 0) {
+        // Haiku's `getconf OPEN_MAX` comes back empty, so don't assume the
+        // query works. Descriptors past the probe are close-on-exec or leak
+        // regardless of what we queue here.
+        open_max = 1024;
+    }
+
+    const int max_fds = static_cast<int>(open_max);
+    for (int fd = STDERR_FILENO + 1; fd < max_fds; fd++) {
+        if (fcntl(fd, F_GETFD) != -1) {
+            posix_spawn_file_actions_addclose(&actions, fd);
+        }
+    }
+#endif
+}
+
 Process::Process(std::string command) : command_(command) {}
 
 Process::StringResult Process::spawn_get_stdout_line() const {
@@ -354,14 +413,7 @@ Process::HandleResult Process::spawn_child_piped(
 //       that. This can prevent Ardour from restarting after an unexpected
 //       shutdown. Because of this we won't use `vfork()`, but instead we'll
 //       just manually close all non-STDIO file descriptors.
-#if (__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34)
-    posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1);
-#else
-    const int max_fds = static_cast<int>(sysconf(_SC_OPEN_MAX));
-    for (int fd = STDERR_FILENO + 1; fd < max_fds; fd++) {
-        posix_spawn_file_actions_addclose(&actions, fd);
-    }
-#endif
+    add_close_non_stdio_fds(actions);
 
     pid_t child_pid = 0;
     const auto result = posix_spawnp(&child_pid, command_.c_str(), &actions,
@@ -409,14 +461,7 @@ Process::HandleResult Process::spawn_child_redirected(
                                      O_WRONLY | O_CREAT | O_APPEND, 0640);
 
     // See the note in the other function
-#if (__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34)
-    posix_spawn_file_actions_addclosefrom_np(&actions, STDERR_FILENO + 1);
-#else
-    const int max_fds = static_cast<int>(sysconf(_SC_OPEN_MAX));
-    for (int fd = STDERR_FILENO + 1; fd < max_fds; fd++) {
-        posix_spawn_file_actions_addclose(&actions, fd);
-    }
-#endif
+    add_close_non_stdio_fds(actions);
 
     pid_t child_pid = 0;
     const auto result = posix_spawnp(&child_pid, command_.c_str(), &actions,

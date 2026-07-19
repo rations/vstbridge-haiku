@@ -94,8 +94,21 @@ Logger Logger::create_from_environment(std::string prefix,
             // and STDOUT streams to a pipe. Luckily `/dev/stderr` stays
             // unaffected, so we can still write there without causing infinite
             // loops.
-            stream = std::make_shared<std::ofstream>(
+            auto dev_stderr = std::make_shared<std::ofstream>(
                 "/dev/stderr", std::fstream::out | std::fstream::app);
+            if (dev_stderr->is_open()) {
+                stream = dev_stderr;
+            } else {
+                // Haiku has no `/dev/stderr`, and an `ofstream` that failed to
+                // open swallows everything written to it. That silently threw
+                // away every initialization error the bridge produced, which is
+                // exactly the output you need when something fails this early.
+                // Fall back to `std::cerr`: the group-process redirection
+                // caveat above still applies, but losing the messages outright
+                // is worse than logging them through a redirected stream.
+                stream = std::shared_ptr<std::ostream>(&std::cerr,
+                                                       [](auto*) {});
+            }
         }
     }
 

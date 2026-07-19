@@ -108,7 +108,16 @@ bool InitModule() {
 }
 
 bool DeinitModule() {
-    assert(bridge);
+    // The SDK's module loader calls `ModuleExit()` from its destructor whenever
+    // `dlopen()` succeeded, and that includes the path where `ModuleEntry()`
+    // returned false because `InitModule()` above failed. There is no bridge to
+    // tear down in that case. Asserting turns a perfectly reportable
+    // initialization error into an abort *in the destructor*, which loses the
+    // actual cause -- release builds only get away with it because `NDEBUG`
+    // compiles the assert out. See `module_haiku.cpp`'s `~HaikuModule`.
+    if (!bridge) {
+        return false;
+    }
 
     bridge.reset();
 
