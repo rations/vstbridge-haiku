@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <variant>
@@ -105,7 +106,7 @@ inline mutable_buffer buffer(llvm::SmallVectorImpl<PodType>& data)
 
 template <typename PodType>
 inline mutable_buffer buffer(llvm::SmallVectorImpl<PodType>& data,
-                                  std::size_t max_size_in_bytes) ASIO_NOEXCEPT {
+                             std::size_t max_size_in_bytes) ASIO_NOEXCEPT {
     return mutable_buffer(
         data.size() ? &data[0] : 0,
         data.size() * sizeof(PodType) < max_size_in_bytes
@@ -820,6 +821,16 @@ class AdHocSocketHandler {
         receive_multi(logger, callback, std::forward<F>(callback));
     }
 
+   protected:
+    /**
+     * Whether this handler is the side that listens for connections, which is
+     * the plugin side. Derived classes use this to tell the two sides apart
+     * where their error handling has to differ: the plugin side has to survive
+     * the Wine host dying, while on the Wine host side the same failure is a
+     * bug that should not be swallowed.
+     */
+    bool is_listening_side() const noexcept { return acceptor_.has_value(); }
+
    private:
     /**
      * Used in `receive_multi()` to asynchronously listen for secondary socket
@@ -1034,10 +1045,39 @@ class TypedMessageHandler : public AdHocSocketHandler<Thread> {
         // messages from arriving out of order. `AdHocSocketHandler::send()`
         // will either use a long-living primary socket, or if that's currently
         // in use it will spawn a new socket for us.
-        this->send([&](asio::local::stream_protocol::socket& socket) {
-            write_object(socket, Request(object), buffer);
-            read_object<TResponse>(socket, response_object, buffer);
-        });
+        //
+        // If the peer died, the socket operations in there throw. On the plugin
+        // side there is nobody above us to catch that: the exception unwinds
+        // into a thread owned by the host, which terminates the entire process.
+        // Containing a plugin crash is the whole point of running the plugin
+        // out of process, so we swallow it here and leave `response_object`
+        // default constructed. `UniversalTResult` defaults to `kResultFalse`,
+        // so callers see a call that failed rather than an empty one that
+        // claims to have succeeded. Once this happens the host is not coming
+        // back, so the flag makes every later call fail immediately instead of
+        // blocking on a socket that will never answer.
+        //
+        // Only the plugin side does this, and on the Wine host side an
+        // exception here means a bug of ours that should not be hidden.
+        const bool is_plugin_side = this->is_listening_side();
+        if (is_plugin_side && peer_is_gone_.load(std::memory_order_relaxed)) {
+            return response_object;
+        }
+
+        try {
+            this->send([&](asio::local::stream_protocol::socket& socket) {
+                write_object(socket, Request(object), buffer);
+                read_object<TResponse>(socket, response_object, buffer);
+            });
+        } catch (const std::exception&) {
+            if (!is_plugin_side) {
+                throw;
+            }
+
+            peer_is_gone_.store(true, std::memory_order_relaxed);
+
+            return response_object;
+        }
 
 #pragma GCC diagnostic pop
 
@@ -1169,6 +1209,18 @@ class TypedMessageHandler : public AdHocSocketHandler<Thread> {
                     : std::nullopt,
             process_message);
     }
+
+   private:
+    /**
+     * Set on the plugin side once a socket operation in `receive_into()` has
+     * failed, which means the Wine host is gone. The host does not come back,
+     * so from that point on every call returns its default constructed response
+     * instead of touching the sockets again.
+     *
+     * Atomic because the control socket is used from several of the host's
+     * threads at once.
+     */
+    std::atomic_bool peer_is_gone_ = false;
 };
 
 /**

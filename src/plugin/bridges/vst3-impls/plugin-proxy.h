@@ -470,6 +470,23 @@ class Vst3PluginProxyImpl : public Vst3PluginProxy {
     YaAudioProcessor::ProcessResponse process_response_;
 
     /**
+     * Set once the Wine plugin host has been found to be gone, after which
+     * `process()` stops touching the sockets and just outputs silence.
+     *
+     * The whole point of hosting the plugin in another process is that its
+     * death cannot take the host down with it. Without this the socket read in
+     * `process()` throws when the peer disappears, and since `process()` is
+     * called through a C ABI from the host's audio thread there is nothing
+     * above it to catch that -- it reaches `std::terminate()` and aborts the
+     * host process. A dead bridge has to degrade to silence instead.
+     *
+     * Written only from the audio thread, read from it as well; atomic because
+     * a future non-audio caller (a teardown path, say) may want to read it, and
+     * a relaxed atomic bool costs nothing here.
+     */
+    std::atomic_bool bridge_is_dead_ = false;
+
+    /**
      * A shared memory object to share audio buffers between the native plugin
      * and the Wine plugin host. Copying audio is the most significant source of
      * bridging overhead during audio processing, and this way we can reduce the

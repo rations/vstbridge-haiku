@@ -16,16 +16,61 @@
 
 #include "plugin-proxy.h"
 
+#include <cstring>
+
 #include <pluginterfaces/vst/ivstmidicontrollers.h>
 
 #include "plug-view-proxy.h"
 
+namespace {
+/**
+ * Fill a plugin's output buffers with silence, for when there is no longer a
+ * Wine plugin host to ask for audio.
+ *
+ * This only writes to buffers the host itself handed us and allocates nothing,
+ * so it is safe to call from the audio thread.
+ */
+void write_silence(Steinberg::Vst::ProcessData& data) noexcept {
+    if (!data.outputs || data.numSamples <= 0) {
+        return;
+    }
+
+    for (Steinberg::int32 bus = 0; bus < data.numOutputs; bus++) {
+        Steinberg::Vst::AudioBusBuffers& buffers = data.outputs[bus];
+
+        for (Steinberg::int32 channel = 0; channel < buffers.numChannels;
+             channel++) {
+            if (data.symbolicSampleSize == Steinberg::Vst::kSample64) {
+                if (buffers.channelBuffers64 &&
+                    buffers.channelBuffers64[channel]) {
+                    std::memset(
+                        buffers.channelBuffers64[channel], 0,
+                        sizeof(double) * static_cast<size_t>(data.numSamples));
+                }
+            } else if (buffers.channelBuffers32 &&
+                       buffers.channelBuffers32[channel]) {
+                std::memset(
+                    buffers.channelBuffers32[channel], 0,
+                    sizeof(float) * static_cast<size_t>(data.numSamples));
+            }
+        }
+
+        // Telling the host every channel is silent lets it skip the buffers
+        // entirely. The shift would be undefined at 64 channels, hence the
+        // separate case.
+        buffers.silenceFlags = buffers.numChannels >= 64
+                                   ? ~uint64_t{0}
+                                   : (uint64_t{1} << buffers.numChannels) - 1;
+    }
+}
+}  // namespace
+
 /**
  * When the host tries to connect two plugin instances with connection proxies,
- * we'll first try to bypass that proxy. This goes against the idea of vstbridge,
- * but these proxies can make things very difficult when plugins start sending
- * messages from the GUI thread. If we cannot figure out what we're connected
- * to, we'll still proxy the host's connection proxy.
+ * we'll first try to bypass that proxy. This goes against the idea of
+ * vstbridge, but these proxies can make things very difficult when plugins
+ * start sending messages from the GUI thread. If we cannot figure out what
+ * we're connected to, we'll still proxy the host's connection proxy.
  */
 constexpr char other_instance_message_id[] = "vstbridge_other_instance";
 /**
@@ -212,6 +257,16 @@ tresult PLUGIN_API Vst3PluginProxyImpl::setProcessing(TBool state) {
 
 tresult PLUGIN_API
 Vst3PluginProxyImpl::process(Steinberg::Vst::ProcessData& data) {
+    // Once the Wine plugin host is gone it is not coming back for this
+    // instance, so there is nothing to send a request to and no response to
+    // wait for. Bailing out here keeps the audio thread away from the sockets
+    // entirely rather than throwing on every cycle.
+    if (bridge_is_dead_.load(std::memory_order_relaxed)) {
+        write_silence(data);
+
+        return Steinberg::kResultOk;
+    }
+
     // We'll synchronize the scheduling priority of the audio thread on the Wine
     // plugin host with that of the host's audio thread every once in a while
     std::optional<int> new_realtime_priority = std::nullopt;
@@ -245,10 +300,27 @@ Vst3PluginProxyImpl::process(Steinberg::Vst::ProcessData& data) {
     process_response_.output_data = process_request_.data.create_response();
 
     // We'll also receive the response into an existing object so we can also
-    // avoid heap allocations there
-    bridge_.receive_audio_processor_message_into(
-        MessageReference<YaAudioProcessor::Process>(process_request_),
-        process_response_);
+    // avoid heap allocations there.
+    //
+    // The Wine plugin host lives in another process precisely so that its death
+    // cannot take the host down with it, and that only holds if this call
+    // tolerates the peer being gone. The socket read throws when it is, and
+    // since this function is called through a C ABI from the host's audio
+    // thread there is nothing above us to catch that -- it would reach
+    // `std::terminate()` and abort the host. So the exception stops here and
+    // the plugin degrades to silence.
+    try {
+        bridge_.receive_audio_processor_message_into(
+            MessageReference<YaAudioProcessor::Process>(process_request_),
+            process_response_);
+    } catch (const std::exception&) {
+        // Deliberately no logging: this is the audio thread. The flag keeps
+        // every later cycle away from the sockets, so this is paid once.
+        bridge_is_dead_.store(true, std::memory_order_relaxed);
+        write_silence(data);
+
+        return Steinberg::kResultOk;
+    }
 
     // At this point the shared audio buffers should contain the output audio,
     // so we'll write that back to the host along with any metadata (which in
