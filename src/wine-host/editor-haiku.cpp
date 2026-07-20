@@ -23,6 +23,10 @@
 #include <cstdint>
 #include <cstdlib>
 
+// Wine's internal `ntuser.h` does not compile as C++, so the input injection
+// lives behind a small C shim
+#include "editor-input.h"
+
 using namespace std::literals::chrono_literals;
 
 namespace {
@@ -306,7 +310,174 @@ std::optional<EditorShmSurface::Config> Editor::surface_config()
     return surface_->config();
 }
 
+namespace {
+
+/**
+ * Translate one of Haiku's raw character codes into a Win32 virtual key code.
+ *
+ * This mapping lives here rather than on the native side because this is the
+ * only side where the `VK_*` constants exist as real symbols, so it is written
+ * against the Windows headers instead of copying their values into a file that
+ * cannot check them. The two are genuinely different: `B_RETURN` is 0x0a where
+ * `VK_RETURN` is 0x0d, and Home, End and the page keys all disagree too.
+ *
+ * The Haiku constants are spelled numerically because this file is compiled
+ * with winegcc and cannot include the Interface Kit's headers; the names from
+ * `headers/os/interface/InterfaceDefs.h` are given alongside each one.
+ *
+ * Only the keys a plugin editor realistically needs are mapped. Anything else
+ * falls through as its own code, which is correct for the letters and digits
+ * that already share Win32's numbering.
+ */
+UINT virtual_key_from_haiku(uint32_t raw_char) noexcept {
+    switch (raw_char) {
+        case 0x01:  // B_HOME
+            return VK_HOME;
+        case 0x04:  // B_END
+            return VK_END;
+        case 0x08:  // B_BACKSPACE
+            return VK_BACK;
+        case 0x09:  // B_TAB
+            return VK_TAB;
+        case 0x0a:  // B_RETURN / B_ENTER
+            return VK_RETURN;
+        case 0x0b:  // B_PAGE_UP
+            return VK_PRIOR;
+        case 0x0c:  // B_PAGE_DOWN
+            return VK_NEXT;
+        case 0x1b:  // B_ESCAPE
+            return VK_ESCAPE;
+        case 0x1c:  // B_LEFT_ARROW
+            return VK_LEFT;
+        case 0x1d:  // B_RIGHT_ARROW
+            return VK_RIGHT;
+        case 0x1e:  // B_UP_ARROW
+            return VK_UP;
+        case 0x1f:  // B_DOWN_ARROW
+            return VK_DOWN;
+        case 0x7f:  // B_DELETE
+            return VK_DELETE;
+        default:
+            break;
+    }
+
+    // Win32 uses the uppercase letter as the virtual key code, so lowercase
+    // has to be folded up or the plugin sees the wrong key entirely
+    if (raw_char >= 'a' && raw_char <= 'z') {
+        return static_cast<UINT>(raw_char - 'a' + 'A');
+    }
+
+    return static_cast<UINT>(raw_char);
+}
+
+}  // namespace
+
+void Editor::drain_input() {
+    if (!surface_ || !win32_window_.handle_) {
+        return;
+    }
+
+    // The window's position is needed to turn client coordinates back into the
+    // screen coordinates the input system expects. Fetched once per drain
+    // rather than per event, since it cannot change midway through.
+    RECT window_rect{};
+    POINT client_origin{0, 0};
+    const bool have_position =
+        GetWindowRect(win32_window_.handle_, &window_rect) &&
+        ClientToScreen(win32_window_.handle_, &client_origin);
+
+    EditorInputEvent event{};
+    while (surface_->pop_input(event)) {
+        // Everything in the mapping is untrusted, so an unrecognised event is
+        // dropped rather than being cast to an enumerator it does not name
+        switch (static_cast<EditorInputType>(event.type)) {
+            case EditorInputType::mouse_move:
+            case EditorInputType::mouse_down:
+            case EditorInputType::mouse_up:
+            case EditorInputType::mouse_wheel:
+                if (have_position) {
+                    inject_mouse(event, client_origin);
+                }
+                break;
+            case EditorInputType::key_down:
+            case EditorInputType::key_up:
+                inject_key(event);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+void Editor::inject_mouse(const EditorInputEvent& event,
+                          const POINT& client_origin) noexcept {
+    // The injection path takes raw screen pixels, unlike the public
+    // `SendInput()`, which scales absolute coordinates into a 0..65535 range.
+    // Only `NtUserSendInput()` runs that conversion, so passing normalized
+    // coordinates here would put the pointer in the wrong place entirely.
+    DWORD flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    DWORD mouse_data = 0;
+
+    switch (static_cast<EditorInputType>(event.type)) {
+        case EditorInputType::mouse_down:
+            switch (static_cast<EditorMouseButton>(event.button)) {
+                case EditorMouseButton::left:
+                    flags |= MOUSEEVENTF_LEFTDOWN;
+                    break;
+                case EditorMouseButton::right:
+                    flags |= MOUSEEVENTF_RIGHTDOWN;
+                    break;
+                case EditorMouseButton::middle:
+                    flags |= MOUSEEVENTF_MIDDLEDOWN;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case EditorInputType::mouse_up:
+            switch (static_cast<EditorMouseButton>(event.button)) {
+                case EditorMouseButton::left:
+                    flags |= MOUSEEVENTF_LEFTUP;
+                    break;
+                case EditorMouseButton::right:
+                    flags |= MOUSEEVENTF_RIGHTUP;
+                    break;
+                case EditorMouseButton::middle:
+                    flags |= MOUSEEVENTF_MIDDLEUP;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case EditorInputType::mouse_wheel:
+            flags |= MOUSEEVENTF_WHEEL;
+            mouse_data = static_cast<DWORD>(event.wheel * WHEEL_DELTA);
+            break;
+        default:
+            break;
+    }
+
+    vstbridge_send_mouse_input(win32_window_.handle_, client_origin.x + event.x,
+                               client_origin.y + event.y, flags, mouse_data);
+}
+
+void Editor::inject_key(const EditorInputEvent& event) noexcept {
+    const DWORD flags =
+        static_cast<EditorInputType>(event.type) == EditorInputType::key_up
+            ? KEYEVENTF_KEYUP
+            : 0;
+
+    vstbridge_send_key_input(
+        win32_window_.handle_,
+        static_cast<WORD>(virtual_key_from_haiku(event.button)), flags);
+}
+
 void Editor::run_capture() {
+    // Input is drained on the same timer as the capture, so it is handled on
+    // the thread that owns the editor window rather than on whichever thread
+    // the native side happened to write it from
+    drain_input();
+
     if (!capture_.capture()) {
         return;
     }

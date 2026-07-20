@@ -30,6 +30,7 @@
 #include <vector>
 
 #include <Bitmap.h>
+#include <InterfaceDefs.h> /* modifiers() and the B_*_KEY masks */
 #include <MessageRunner.h>
 #include <View.h>
 #include <Window.h>
@@ -102,7 +103,71 @@ class EditorViewImpl : public BView {
             return;
         }
 
+        if (message->what == B_MOUSE_WHEEL_CHANGED) {
+            // The wheel arrives as a message rather than a hook, and carries no
+            // position, so the pointer is asked where it is
+            float delta_y = 0.0f;
+            message->FindFloat("be:wheel_delta_y", &delta_y);
+            if (delta_y != 0.0f) {
+                BPoint where;
+                uint32 buttons = 0;
+                GetMouse(&where, &buttons, false);
+
+                // Haiku counts a notch downwards as positive and Win32 counts
+                // it upwards, hence the negation
+                push(EditorInputType::mouse_wheel, where,
+                     EditorMouseButton::none, -static_cast<int32_t>(delta_y));
+            }
+
+            return;
+        }
+
         BView::MessageReceived(message);
+    }
+
+    void MouseDown(BPoint where) override {
+        // Keep receiving events once the button is held even if the pointer
+        // leaves the view, which is what makes dragging a knob past the edge
+        // of the editor behave. Without this the plugin sees the button go
+        // down and never come back up.
+        SetMouseEventMask(B_POINTER_EVENTS, B_LOCK_WINDOW_FOCUS);
+
+        // Plugins that accept typed input need the keyboard to come here
+        if (!IsFocus()) {
+            MakeFocus(true);
+        }
+
+        int32 buttons = 0;
+        if (Window() != nullptr && Window()->CurrentMessage() != nullptr) {
+            Window()->CurrentMessage()->FindInt32("buttons", &buttons);
+        }
+
+        held_button_ = button_from_mask(buttons);
+        push(EditorInputType::mouse_down, where, held_button_, 0);
+    }
+
+    void MouseUp(BPoint where) override {
+        // BeAPI does not say which button was released, so the plugin is told
+        // about whichever one this view saw go down. Tracking it here rather
+        // than guessing keeps a right-drag from ending as a left release.
+        push(EditorInputType::mouse_up, where, held_button_, 0);
+        held_button_ = EditorMouseButton::none;
+    }
+
+    void MouseMoved(BPoint where, uint32 /*code*/, const BMessage*) override {
+        push(EditorInputType::mouse_move, where, EditorMouseButton::none, 0);
+    }
+
+    void KeyDown(const char* bytes, int32 numBytes) override {
+        if (!push_key(EditorInputType::key_down)) {
+            BView::KeyDown(bytes, numBytes);
+        }
+    }
+
+    void KeyUp(const char* bytes, int32 numBytes) override {
+        if (!push_key(EditorInputType::key_up)) {
+            BView::KeyUp(bytes, numBytes);
+        }
     }
 
     void Draw(BRect update_rect) override {
@@ -169,6 +234,114 @@ class EditorViewImpl : public BView {
     }
 
    private:
+    /**
+     * Translate Haiku's button mask into ours. Only the first button found is
+     * reported, since the plugin is told about one button per event.
+     */
+    static EditorMouseButton button_from_mask(int32 buttons) noexcept {
+        if (buttons & B_PRIMARY_MOUSE_BUTTON) {
+            return EditorMouseButton::left;
+        }
+        if (buttons & B_SECONDARY_MOUSE_BUTTON) {
+            return EditorMouseButton::right;
+        }
+        if (buttons & B_TERTIARY_MOUSE_BUTTON) {
+            return EditorMouseButton::middle;
+        }
+
+        return EditorMouseButton::none;
+    }
+
+    /**
+     * The modifier keys currently held, as a mask of `EditorModifier` values.
+     */
+    static uint32_t modifier_mask() noexcept {
+        const uint32 held = ::modifiers();
+
+        uint32_t mask = 0;
+        if (held & B_SHIFT_KEY) {
+            mask |= static_cast<uint32_t>(EditorModifier::shift);
+        }
+        if (held & B_CONTROL_KEY) {
+            mask |= static_cast<uint32_t>(EditorModifier::control);
+        }
+        if (held & B_COMMAND_KEY) {
+            // Haiku's Alt is B_COMMAND_KEY by default, and that is the key
+            // sitting where a Windows plugin expects Alt
+            mask |= static_cast<uint32_t>(EditorModifier::alt);
+        }
+
+        return mask;
+    }
+
+    /**
+     * Queue an event for the Wine side. Silently does nothing when no surface
+     * is mapped, which is the case before the editor has published a frame.
+     */
+    void push(EditorInputType type,
+              BPoint where,
+              EditorMouseButton button,
+              int32_t wheel) noexcept {
+        if (!surface_) {
+            return;
+        }
+
+        // The view is laid out at exactly the editor's size and painted from
+        // its top left, so view coordinates already are client coordinates
+        const EditorInputEvent event{
+            .type = static_cast<uint32_t>(type),
+            .x = static_cast<int32_t>(where.x),
+            .y = static_cast<int32_t>(where.y),
+            .button = static_cast<uint32_t>(button),
+            .modifiers = modifier_mask(),
+            .wheel = wheel,
+        };
+
+        if (!surface_->push_input(event) && !logged_input_overflow_) {
+            // A full ring means the Wine side has stopped draining it. Worth
+            // saying once, but never at the rate events arrive.
+            logger_.log(
+                "Editor view: the plugin is not reading its input, so events "
+                "are being dropped");
+            logged_input_overflow_ = true;
+        }
+    }
+
+    /**
+     * Queue a key event, reading the key out of the message being dispatched.
+     *
+     * @return Whether the event was queued. When it was not, the caller passes
+     *   the key on to `BView` so the host's own shortcuts still work while no
+     *   editor is mapped.
+     */
+    bool push_key(EditorInputType type) noexcept {
+        if (!surface_ || Window() == nullptr) {
+            return false;
+        }
+
+        const BMessage* const message = Window()->CurrentMessage();
+        if (message == nullptr) {
+            return false;
+        }
+
+        int32 raw_char = 0;
+        if (message->FindInt32("raw_char", &raw_char) != B_OK) {
+            return false;
+        }
+
+        // Keys carry no position; the Wine side leaves the pointer alone
+        const EditorInputEvent event{
+            .type = static_cast<uint32_t>(type),
+            .x = 0,
+            .y = 0,
+            .button = static_cast<uint32_t>(raw_char),
+            .modifiers = modifier_mask(),
+            .wheel = 0,
+        };
+
+        return surface_->push_input(event);
+    }
+
     /**
      * Copy the newest published frame into `bitmap_` and ask for a redraw if
      * there was one. Runs on the looper thread, on the frame timer.
@@ -298,6 +471,17 @@ class EditorViewImpl : public BView {
      * flood the log at the frame rate.
      */
     bool logged_read_failure_ = false;
+
+    /**
+     * As `logged_read_failure_`, for a full input ring.
+     */
+    bool logged_input_overflow_ = false;
+
+    /**
+     * Which button this view saw go down, so the matching release can name it.
+     * BeAPI's `MouseUp()` does not say.
+     */
+    EditorMouseButton held_button_ = EditorMouseButton::none;
 };
 
 BridgedEditorView::BridgedEditorView(Logger& logger,

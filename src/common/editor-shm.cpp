@@ -90,6 +90,8 @@ EditorShmSurface::EditorShmSurface(const Config& config, bool create)
         h->width.store(0, std::memory_order_relaxed);
         h->height.store(0, std::memory_order_relaxed);
         h->front.store(0, std::memory_order_relaxed);
+        h->input_write.store(0, std::memory_order_relaxed);
+        h->input_read.store(0, std::memory_order_relaxed);
         // Published frames start at 1, so a reader that has seen nothing can
         // start from 0 and still be told about the very first frame
         h->sequence.store(0, std::memory_order_release);
@@ -252,6 +254,66 @@ bool EditorShmSurface::read_frame(uint8_t* destination,
     }
 
     last_sequence = sequence;
+
+    return true;
+}
+
+bool EditorShmSurface::push_input(const EditorInputEvent& event) noexcept {
+    if (!shm_bytes_) {
+        return false;
+    }
+
+    Header* const h = header();
+    if (h->magic != header_magic || h->version != header_version) {
+        return false;
+    }
+
+    // Only this side advances the write index, so it can be read cheaply. The
+    // read index is owned by the Wine side and needs an acquire to be sure the
+    // slot it released is really free.
+    const uint32_t write = h->input_write.load(std::memory_order_relaxed);
+    const uint32_t read = h->input_read.load(std::memory_order_acquire);
+
+    // Unsigned arithmetic, so this stays correct when the indices wrap
+    if (write - read >= input_capacity) {
+        return false;
+    }
+
+    *input_slot(write) = event;
+
+    // Release, so the Wine side cannot observe the new index before the event
+    // it points at
+    h->input_write.store(write + 1, std::memory_order_release);
+
+    return true;
+}
+
+bool EditorShmSurface::pop_input(EditorInputEvent& event) noexcept {
+    if (!shm_bytes_) {
+        return false;
+    }
+
+    Header* const h = header();
+    if (h->magic != header_magic || h->version != header_version) {
+        return false;
+    }
+
+    const uint32_t read = h->input_read.load(std::memory_order_relaxed);
+    const uint32_t write = h->input_write.load(std::memory_order_acquire);
+
+    if (read == write) {
+        return false;
+    }
+
+    // A write index that has run further ahead than the ring is long means the
+    // other side is not playing by these rules, so nothing here can be trusted
+    if (write - read > input_capacity) {
+        return false;
+    }
+
+    event = *input_slot(read);
+
+    h->input_read.store(read + 1, std::memory_order_release);
 
     return true;
 }

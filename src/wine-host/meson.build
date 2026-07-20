@@ -16,6 +16,9 @@ if is_64bit_system
     wine_threads_dep,
     xcb_64bit_dep,
   ]
+  if host_machine.system() == 'haiku'
+    host_64bit_deps += [wine_win32u_dep]
+  endif
   if with_clap
     host_64bit_deps += [clap_dep]
   endif
@@ -85,6 +88,37 @@ if is_haiku
     'editor-capture.cpp',
     'editor-haiku.cpp',
   )
+
+  # `editor-input.c` is C rather than C++ because it needs Wine's internal
+  # `ntuser.h`, which does not compile as C++. See the comments at the top of
+  # `editor-input.h`.
+  #
+  # It is built as its own library rather than added to `host_sources` because
+  # Meson puts the executable's `cpp_args` on every source in the target,
+  # C ones included, and those carry `-include cstdint` and
+  # `-fvisibility-inlines-hidden` -- neither of which a C compile accepts.
+  # Giving this one file its own target keeps the C++ flags off it.
+  if is_64bit_system
+    editor_input_lib = static_library(
+      'vstbridge-editor-input',
+      files('editor-input.c'),
+      native : false,
+      # The include and library paths come from the cross file's `c_args`; only
+      # the architecture has to be repeated here, as it is for the C++ sources.
+      #
+      # `__WINESRC__` is what Wine's own drivers compile under, and the types
+      # `ntuser.h` refers to -- `SCROLL_TRACKING_INFO` and
+      # `NONCLIENT_BUTTON_TYPE` -- are declared behind it in `winuser.h`.
+      # Without it those fields have incomplete types. It is deliberately not
+      # set for the rest of the build, which is another reason this file is
+      # compiled on its own.
+      c_args : ['-m64', '-D__WINESRC__'],
+    )
+
+    host_64bit_deps += [
+      declare_dependency(link_with : editor_input_lib),
+    ]
+  endif
 else
   host_sources += files(
     'editor.cpp',

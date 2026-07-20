@@ -1,6 +1,10 @@
 project(
   'vstbridge',
-  'cpp',
+  # C is only used on Haiku, for the one translation unit that has to include
+  # Wine's internal `ntuser.h` -- that header does not compile as C++. Declaring
+  # the language unconditionally keeps this list the same on every platform; the
+  # C source itself is only added to the build on Haiku.
+  ['cpp', 'c'],
   version : '5.1.1',
   meson_version : '>=0.56',
   default_options : [
@@ -344,6 +348,11 @@ wine_shell32_dep = declare_dependency(link_args : '-lshell32')
 # The built in threads dependency does not know how to handle winegcc
 wine_threads_dep = declare_dependency(link_args : '-lpthread')
 wine_uuid_dep = declare_dependency(link_args : '-luuid')
+# Haiku only: the editor is not embedded in the host's window, so input has to
+# be injected into the plugin's own window rather than arriving from a display
+# server. `NtUserSendHardwareInput()` is the entry point the real graphics
+# drivers use, and it lives in win32u.
+wine_win32u_dep = declare_dependency(link_args : '-lwin32u')
 
 if with_clap
   clap_dep = dependency('clap', version : ['>=1.1.7', '<1.2'])

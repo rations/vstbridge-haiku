@@ -176,6 +176,28 @@ class Editor {
 
    private:
     /**
+     * Hand any input the native side has queued to the plugin, oldest first.
+     *
+     * Called from the capture timer, which runs on the thread that owns the
+     * editor window. That matters: the input system expects to be driven from
+     * a proper Wine thread, and the native side writes its events from a
+     * `BWindow` looper that Wine knows nothing about.
+     */
+    void drain_input();
+
+    /**
+     * Inject one mouse event. `client_origin` is the editor's client area in
+     * screen coordinates, since that is what the input system wants.
+     */
+    void inject_mouse(const EditorInputEvent& event,
+                      const POINT& client_origin) noexcept;
+
+    /**
+     * Inject one key event.
+     */
+    void inject_key(const EditorInputEvent& event) noexcept;
+
+    /**
      * Copy the frame `capture_` just took into the shared memory object,
      * creating or re-laying-out that object first if the editor's size has
      * changed. Only called when a surface has been asked for.
