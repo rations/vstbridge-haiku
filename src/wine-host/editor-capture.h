@@ -40,6 +40,13 @@
 //    of the `PrintWindow()` gymnastics that capturing a Windows window
 //    requires.
 //
+// That second property stops at the top level, and the exception matters:
+// dropdowns and context menus are `WS_POPUP` windows, which are *not* children.
+// They get a surface of their own and so appear nowhere in the editor window's
+// DC. They are blitted in separately afterwards, positioned relative to the
+// editor's client origin, so a menu the plugin opens still shows up in the
+// host.
+//
 // A window still has to be `WS_VISIBLE` for win32u to give it a surface and for
 // Win32 to keep delivering `WM_PAINT`. Hiding the editor window is therefore
 // not an option; keeping it visible while stopping it from reaching the screen
@@ -135,6 +142,18 @@ class EditorCapture {
      * as a freshly constructed one.
      */
     void release_buffer() noexcept;
+
+    /**
+     * Blit any visible `WS_POPUP` windows the plugin owns over the frame that
+     * was just captured, positioned relative to the editor's client origin.
+     *
+     * Menus are top-level windows with their own surface, so they are missing
+     * from the editor window's own DC. Anything falling outside the editor's
+     * client area is clipped away by the target DIB, which is the same
+     * behaviour the host would show for a menu running off the edge of the
+     * embedded view.
+     */
+    void composite_popups() noexcept;
 
     Logger& logger_;
 

@@ -161,12 +161,91 @@ bool EditorCapture::capture() noexcept {
 
     logged_capture_failure_ = false;
 
+    // Menus and dropdowns are separate top-level windows, so they are not part
+    // of the blit above and have to be drawn over it
+    composite_popups();
+
     // GDI batches drawing commands, and the batch is per-thread rather than per
     // DC, so without this the bits behind `pixels_` may not have been written
     // yet when we go on to read them
     GdiFlush();
 
     return true;
+}
+
+namespace {
+/**
+ * The most popups composited into a single frame. A plugin showing more than a
+ * couple of menus at once is already pathological, and the cap keeps the scan
+ * allocation-free.
+ */
+constexpr size_t max_composited_popups = 8;
+
+struct PopupScan {
+    HWND editor;
+    HWND windows[max_composited_popups];
+    size_t count;
+};
+
+BOOL CALLBACK collect_popup(HWND window, LPARAM param) noexcept {
+    PopupScan* const scan = reinterpret_cast<PopupScan*>(param);
+
+    if (window == scan->editor || !IsWindowVisible(window)) {
+        return TRUE;
+    }
+
+    scan->windows[scan->count++] = window;
+
+    // Stop once the array is full rather than overrunning it
+    return scan->count < max_composited_popups;
+}
+}  // namespace
+
+void EditorCapture::composite_popups() noexcept {
+    // The editor window's own thread owns any menu it opens, so this is both
+    // cheaper than `EnumWindows()` and automatically scoped to this plugin
+    PopupScan scan{window_, {}, 0};
+    EnumThreadWindows(GetWindowThreadProcessId(window_, nullptr), collect_popup,
+                      reinterpret_cast<LPARAM>(&scan));
+    if (scan.count == 0) {
+        return;
+    }
+
+    // Popup positions are in screen coordinates while the capture buffer starts
+    // at the editor's client origin, so everything is offset by that origin
+    POINT client_origin{0, 0};
+    if (!ClientToScreen(window_, &client_origin)) {
+        return;
+    }
+
+    // `EnumThreadWindows()` walks the window list front to back, so painting in
+    // reverse leaves the topmost popup on top
+    for (size_t i = scan.count; i > 0; i--) {
+        const HWND popup = scan.windows[i - 1];
+
+        RECT popup_rect{};
+        if (!GetWindowRect(popup, &popup_rect)) {
+            continue;
+        }
+
+        const LONG popup_width = popup_rect.right - popup_rect.left;
+        const LONG popup_height = popup_rect.bottom - popup_rect.top;
+        if (popup_width <= 0 || popup_height <= 0) {
+            continue;
+        }
+
+        // `GetWindowDC()` covers the whole window including any frame, which is
+        // the rectangle `GetWindowRect()` just reported
+        const HDC popup_dc = GetWindowDC(popup);
+        if (!popup_dc) {
+            continue;
+        }
+
+        BitBlt(memory_dc_, popup_rect.left - client_origin.x,
+               popup_rect.top - client_origin.y, popup_width, popup_height,
+               popup_dc, 0, 0, SRCCOPY);
+        ReleaseDC(popup, popup_dc);
+    }
 }
 
 bool EditorCapture::dump_bmp(const std::string& path) const noexcept {

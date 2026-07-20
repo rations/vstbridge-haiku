@@ -457,7 +457,12 @@ void Editor::inject_mouse(const EditorInputEvent& event,
             break;
     }
 
-    vstbridge_send_mouse_input(win32_window_.handle_, client_origin.x + event.x,
+    // No target window is named, so the server routes the event by position the
+    // way a real mouse driver's would. Naming the editor window instead would
+    // pin every event to it: the server only hit-tests when the named window is
+    // invisible, so a dropdown the plugin opened -- a separate top-level window
+    // sitting above the editor -- would never see a click.
+    vstbridge_send_mouse_input(nullptr, client_origin.x + event.x,
                                client_origin.y + event.y, flags, mouse_data);
 }
 
