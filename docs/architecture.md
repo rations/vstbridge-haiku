@@ -146,6 +146,66 @@ that stores the `IDataSource` used for the drop. That means that we can just
 listen for that tracker window being created, read the data the plugin is trying
 to drag-and-drop, and then set up XDND with that same data.
 
+### Editor bridging on Haiku
+
+None of the above applies on Haiku, because embedding is not possible there at
+all. Every application gets its own view token space and app_server rejects a
+parent view token belonging to another team, so there is no equivalent of X11
+reparenting or XEmbed, and replicants are not a loophole since they load the
+code into the host's address space. The editor is therefore *copied* rather than
+embedded: `src/wine-host/editor-haiku.{h,cpp}` and `editor-capture.{h,cpp}`
+replace `editor.cpp`, and the X11 sources are dropped from the build rather than
+deleted so upstream changes still apply to them.
+
+The plugin draws into an ordinary top-level Wine window that never reaches the
+screen. Each frame that window's backing store is blitted into a 32-bit top-down
+DIB, published through a shared memory object (`src/common/editor-shm.{h,cpp}`)
+and painted into a `BView` on the native side. `B_RGB32` is byte for byte the
+layout of the captured DIB, so no pixel conversion happens anywhere. Input
+travels back the other way through a lock-free ring in the same shared memory
+object and is injected with `NtUserSendHardwareInput`, which preserves the
+capture and drag tracking that plugins rely on. It deliberately does not use the
+control socket, which is strictly request/response and would block the host's UI
+thread for a round trip on every mouse move.
+
+Two details of Wine's window handling are what make the copy cheap and complete,
+and neither holds on real Windows:
+
+- Painting lands in an in-memory `window_surface` rather than a screen
+  framebuffer, so reading a window's DC yields what the plugin drew regardless
+  of what is on screen.
+- Child windows get no surface of their own and draw into their top-level
+  ancestor's, so one `BitBlt()` captures the editor with all its controls.
+
+That second property stops at the top level. Dropdowns and context menus are
+`WS_POPUP` windows, which are not children: they get a surface of their own and
+so appear nowhere in the editor window's DC. Visible top-level windows belonging
+to the editor's thread are blitted over the frame separately, positioned
+relative to the editor's client origin and clipped to it. For the same reason
+injected mouse events name no target window, so the server hit-tests them by
+position the way it would for a real mouse; naming the editor window would pin
+every event to it and a popup stacked above it could never be clicked.
+
+#### Prefix requirement
+
+The bridge needs the Wine prefix to use the **null graphics driver**:
+
+```shell
+wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f
+```
+
+The null driver declines to create a driver window surface, which sends win32u
+down its offscreen surface path instead. The editor window still gets somewhere
+to draw and still receives `WM_PAINT`, but never reaches a display, so the
+host's copy is the only one visible. Hiding the window would not work: an
+invisible window gets no surface at all and stops painting entirely, taking the
+capture with it.
+
+This is chosen once per prefix, by explorer when it creates the desktop, so the
+bridge cannot set it per plugin and does not try. Any other driver still works,
+just with the plugin's own window floating on screen alongside the host's copy;
+the Wine host logs a warning saying so when it finds one.
+
 ## VST2 plugins
 
 When a VST2 plugin gets initialized using the process described above, we'll

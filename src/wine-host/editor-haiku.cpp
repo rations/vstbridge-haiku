@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 // Wine's internal `ntuser.h` does not compile as C++, so the input injection
 // lives behind a small C shim
@@ -45,6 +46,63 @@ constexpr size_t capture_timer_id = 1338;
  * had not drawn yet when the first frame was taken.
  */
 constexpr uint32_t capture_dump_frames[] = {5, 30, 120};
+
+/**
+ * Warn when the prefix is not using Wine's null graphics driver.
+ *
+ * The editor is bridged by capturing the plugin window's backing store and
+ * painting it in the host, so the plugin's own on-screen window is never wanted
+ * -- it just floats over the host as a second copy of the same editor. The null
+ * driver is what suppresses it: it declines to create a driver window surface,
+ * which sends win32u down its offscreen surface path instead, so the window
+ * still gets somewhere to draw and still receives `WM_PAINT` while never
+ * reaching a display. Hiding the window would not do, since an invisible window
+ * gets no surface at all and stops painting entirely.
+ *
+ * This cannot be set from here. The driver is chosen once per prefix, by
+ * explorer when it creates the desktop, from
+ * `HKCU\Software\Wine\Drivers\Graphics` -- so all this can do is say what is
+ * wrong and how to fix it. Anything other than the null driver still works,
+ * just with the plugin's own window visible alongside the host's copy.
+ */
+void warn_unless_null_graphics_driver(Logger& logger) noexcept {
+    // Left empty when the key or the value is missing, which means Wine picks
+    // its compiled-in default rather than the null driver
+    char driver[32]{};
+
+    HKEY key = nullptr;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Wine\\Drivers", 0,
+                      KEY_QUERY_VALUE, &key) == ERROR_SUCCESS) {
+        DWORD type = 0;
+        // One short of the buffer, so a value stored without its terminator
+        // still leaves the zero initialization in place at the end
+        DWORD size = sizeof(driver) - 1;
+        if (RegQueryValueExA(key, "Graphics", nullptr, &type,
+                             reinterpret_cast<BYTE*>(driver),
+                             &size) != ERROR_SUCCESS ||
+            type != REG_SZ) {
+            driver[0] = '\0';
+        }
+
+        RegCloseKey(key);
+    }
+
+    if (std::strcmp(driver, "null") == 0) {
+        return;
+    }
+
+    logger.log("");
+    logger.log("WARNING: This Wine prefix uses the '" +
+               std::string(driver[0] ? driver : "<default>") +
+               "' graphics driver.");
+    logger.log("         The plugin's own editor window will be visible on");
+    logger.log("         screen on top of the copy drawn in the host. Set it");
+    logger.log("         to 'null' to keep the editor to the host window:");
+    logger.log("");
+    logger.log("           wine reg add 'HKCU\\Software\\Wine\\Drivers' \\");
+    logger.log("             /v Graphics /d null /f");
+    logger.log("");
+}
 
 /**
  * The window procedure for our editor windows.
@@ -188,6 +246,11 @@ Editor::Editor(MainContext& main_context,
         logger_.log("Could not create the plugin's editor window");
         return;
     }
+
+    // The bridge depends on a prefix-wide setting it cannot make itself, so a
+    // prefix that has not been set up says so in the log rather than silently
+    // growing a second editor window
+    warn_unless_null_graphics_driver(logger_);
 
     // Both timers reach this object through the window, so this has to be set
     // before either of them is created
