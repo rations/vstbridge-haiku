@@ -131,10 +131,30 @@ tresult PLUGIN_API Vst3PlugViewProxyImpl::attached(void* parent,
     if (parent && type) {
         // We will embed the Wine Win32 window into the X11 window provided by
         // the host
-        return bridge_.send_mutually_recursive_message(YaPlugView::Attached{
-            .owner_instance_id = owner_instance_id(),
-            .parent = reinterpret_cast<native_size_t>(parent),
-            .type = type});
+        const tresult result =
+            bridge_.send_mutually_recursive_message(YaPlugView::Attached{
+                .owner_instance_id = owner_instance_id(),
+                .parent = reinterpret_cast<native_size_t>(parent),
+                .type = type});
+
+#ifdef __HAIKU__
+        // Nothing was embedded into `parent`, because nothing can be:
+        // app_server refuses a parent view token owned by another team. The
+        // Wine side has instead started publishing the editor's pixels, so a
+        // view of our own goes into `parent` to paint them.
+        if (result == Steinberg::kResultOk) {
+            editor_view_ = std::make_unique<BridgedEditorView>(
+                bridge_.logger_.logger_,
+                [this]() { refresh_editor_surface(); });
+            if (editor_view_->attach_to(parent)) {
+                refresh_editor_surface();
+            } else {
+                editor_view_.reset();
+            }
+        }
+#endif
+
+        return result;
     } else {
         bridge_.logger_.log(
             "WARNING: Null pointer passed to 'IPlugView::attached()'");
@@ -142,7 +162,36 @@ tresult PLUGIN_API Vst3PlugViewProxyImpl::attached(void* parent,
     }
 }
 
+#ifdef __HAIKU__
+void Vst3PlugViewProxyImpl::refresh_editor_surface() {
+    if (!editor_view_) {
+        return;
+    }
+
+    const YaPlugView::GetEditorSurface::Response response =
+        bridge_.send_mutually_recursive_message(YaPlugView::GetEditorSurface{
+            .owner_instance_id = owner_instance_id()});
+
+    // The editor may simply not have drawn a frame yet, in which case there is
+    // nothing to map and a later call picks it up
+    if (!response.config) {
+        return;
+    }
+
+    if (!editor_view_->has_surface_for(*response.config)) {
+        editor_view_->set_surface(*response.config);
+    }
+}
+#endif
+
 tresult PLUGIN_API Vst3PlugViewProxyImpl::removed() {
+#ifdef __HAIKU__
+    if (editor_view_) {
+        editor_view_->detach();
+        editor_view_.reset();
+    }
+#endif
+
     return bridge_.send_mutually_recursive_message(
         YaPlugView::Removed{.owner_instance_id = owner_instance_id()});
 }

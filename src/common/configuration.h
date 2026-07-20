@@ -117,8 +117,12 @@ class Configuration {
      * XEmbed support is not very polished yet and tends to lead to rendering
      * issues, so this is disabled by default. Also, editor resizing won't work
      * reliably when XEmbed is enabled.
+     *
+     * On Haiku this has no effect at all: XEmbed is an X11 protocol, the XCB
+     * editor is not built there, and `editor-haiku.cpp` never reads this. It is
+     * kept so the serialized configuration stays identical across platforms.
      */
-    bool editor_xembed = true;
+    bool editor_xembed = false;
 
     /**
      * The number of times per second we'll handle the event loop. In most

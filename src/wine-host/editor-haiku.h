@@ -41,7 +41,9 @@
 #include <function2/function2.hpp>
 
 #include "../common/configuration.h"
+#include "../common/editor-shm.h"
 #include "../common/logging/common.h"
+#include "editor-capture.h"
 #include "utils.h"
 
 /**
@@ -100,12 +102,12 @@ class Editor {
      * @param timer_proc A function to run on a timer. Used by VST2 plugins to
      *   periodically call `effEditIdle` from the message loop thread.
      */
-    Editor(MainContext& main_context,
-           const Configuration& config,
-           Logger& logger,
-           const size_t parent_window_handle,
-           std::optional<fu2::unique_function<void()>> timer_proc =
-               std::nullopt);
+    Editor(
+        MainContext& main_context,
+        const Configuration& config,
+        Logger& logger,
+        const size_t parent_window_handle,
+        std::optional<fu2::unique_function<void()>> timer_proc = std::nullopt);
 
     Editor(const Editor&) = delete;
     Editor& operator=(const Editor&) = delete;
@@ -136,7 +138,50 @@ class Editor {
      */
     HWND win32_handle() const noexcept;
 
+    /**
+     * Run the idle timer callback, if this editor was given one. Called from
+     * the window procedure, which reaches this object through the window's
+     * `GWLP_USERDATA`.
+     */
+    void run_idle_timer();
+
+    /**
+     * Grab a frame of the plugin's editor and publish it to the native side.
+     * Called from the window procedure on the capture timer.
+     */
+    void run_capture();
+
+    /**
+     * Start carrying this editor's frames over a shared memory object with
+     * this name, so the native plugin can paint them into the host's window.
+     *
+     * The object is created here when the plugin has already reported an
+     * editor size, so `surface_config()` has something to hand back straight
+     * away. If it has not, the object is created on the first captured frame
+     * instead.
+     *
+     * @param width The editor's width as the plugin reported it, or 0 if it
+     *   has not reported one yet.
+     * @param height As `width`.
+     */
+    void enable_surface(const std::string& name,
+                        uint16_t width,
+                        uint16_t height);
+
+    /**
+     * The configuration the native side needs in order to map the same shared
+     * memory object, or `std::nullopt` if no frame has been captured yet.
+     */
+    std::optional<EditorShmSurface::Config> surface_config() const noexcept;
+
    private:
+    /**
+     * Copy the frame `capture_` just took into the shared memory object,
+     * creating or re-laying-out that object first if the editor's size has
+     * changed. Only called when a surface has been asked for.
+     */
+    void publish_frame();
+
     Logger& logger_;
 
     /**
@@ -146,9 +191,9 @@ class Editor {
 
     /**
      * The function the idle timer runs. The window procedure reaches this
-     * through the window's `GWLP_USERDATA`, so it has to outlive the timer --
-     * hence its position between the window and the timer here, since members
-     * are destroyed in reverse declaration order.
+     * through `run_idle_timer()`, so it has to outlive the timer -- hence its
+     * position between the window and the timer here, since members are
+     * destroyed in reverse declaration order.
      */
     fu2::unique_function<void()> idle_timer_proc_;
 
@@ -157,4 +202,49 @@ class Editor {
      * was given. Killed before `idle_timer_proc_` is destroyed.
      */
     std::optional<Win32Timer> timer_;
+
+    /**
+     * Reads the plugin's editor window back into a bitmap. Declared after the
+     * window so it is destroyed before it, since it holds the window handle.
+     */
+    EditorCapture capture_;
+
+    /**
+     * The timer driving `capture_`, only set when capturing is enabled.
+     */
+    std::optional<Win32Timer> capture_timer_;
+
+    /**
+     * The shared memory object the captured frames are published to, and the
+     * name it was asked to use. The object is created on the first captured
+     * frame, once the editor's size is known, and re-laid-out whenever that
+     * size changes.
+     */
+    std::optional<EditorShmSurface> surface_;
+    std::string surface_name_;
+
+    /**
+     * The interval both timers run at, kept so the capture timer can be
+     * started later than the constructor if a surface is asked for.
+     */
+    unsigned int capture_interval_ms_ = 0;
+
+    /**
+     * Set after a surface setup failure has been logged, so a permanently
+     * failing surface cannot flood the log at the frame rate.
+     */
+    bool logged_surface_failure_ = false;
+
+    /**
+     * Where `VSTBRIDGE_CAPTURE_DUMP` asked for captured frames to be written,
+     * if it was set. Frames are written as `<prefix>-<frame>.bmp`.
+     */
+    std::optional<std::string> capture_dump_prefix_;
+
+    /**
+     * How many times `run_capture()` has run, used to pick which frames get
+     * dumped. Saturates rather than wrapping so a long lived editor cannot
+     * start dumping again.
+     */
+    uint32_t captured_frames_ = 0;
 };

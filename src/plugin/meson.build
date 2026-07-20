@@ -39,6 +39,7 @@ if with_vst3
     configuration_dep,
 
     asio_dep,
+    be_dep,
     bitsery_dep,
     dbus_dep,
     dl_dep,
@@ -180,4 +181,14 @@ if with_vst3
     'utils.cpp',
     'vst3-plugin.cpp',
   )
+
+  if is_haiku
+    # The editor's pixels are carried over shared memory instead of the editor
+    # window being embedded into the host's, which is impossible here. See the
+    # comments at the top of `common/editor-shm.h`.
+    vst3_plugin_sources += files(
+      '../common/editor-shm.cpp',
+      'editor-view-haiku.cpp',
+    )
+  endif
 endif

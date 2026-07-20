@@ -103,6 +103,13 @@ using Vst3ControlRequest =
                  YaParameterFunctionName::GetParameterIDFromFunctionName,
                  YaPlugView::IsPlatformTypeSupported,
                  YaPlugView::Attached,
+#ifdef __HAIKU__
+                 // The editor is copied over shared memory rather than being
+                 // embedded, which is impossible here. Both ends of the bridge
+                 // are built for the same platform, so the alternatives being
+                 // numbered differently per platform does not matter.
+                 YaPlugView::GetEditorSurface,
+#endif
                  YaPlugView::Removed,
                  YaPlugView::OnWheel,
                  YaPlugView::OnKeyDown,

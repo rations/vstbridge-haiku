@@ -578,6 +578,15 @@ bool Vst3Logger::log_request(bool is_host_plugin,
     });
 }
 
+#ifdef __HAIKU__
+bool Vst3Logger::log_request(bool is_host_plugin,
+                             const YaPlugView::GetEditorSurface& request) {
+    return log_request_base(is_host_plugin, [&](auto& message) {
+        message << request.owner_instance_id << ": <get editor surface>";
+    });
+}
+#endif
+
 bool Vst3Logger::log_request(bool is_host_plugin,
                              const YaPlugView::Removed& request) {
     return log_request_base(is_host_plugin, [&](auto& message) {
@@ -1867,6 +1876,22 @@ void Vst3Logger::log_response(
         }
     });
 }
+
+#ifdef __HAIKU__
+void Vst3Logger::log_response(
+    bool is_host_plugin,
+    const YaPlugView::GetEditorSurface::Response& response) {
+    log_response_base(is_host_plugin, [&](auto& message) {
+        if (response.config) {
+            message << "<editor surface \"" << response.config->name << "\", "
+                    << response.config->width << "x" << response.config->height
+                    << ">";
+        } else {
+            message << "<no editor surface yet>";
+        }
+    });
+}
+#endif
 
 void Vst3Logger::log_response(bool is_host_plugin,
                               const YaComponent::SetActiveResponse& response) {

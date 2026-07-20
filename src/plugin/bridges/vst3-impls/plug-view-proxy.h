@@ -20,6 +20,12 @@
 
 #include "../vst3.h"
 
+#ifdef __HAIKU__
+#include <memory>
+
+#include "../../editor-view-haiku.h"
+#endif
+
 /**
  * A RAII wrapper around `IRunLoop`'s event handlers so we can schedule tasks to
  * be run in it. This is needed for REAPER, because function calls that involve
@@ -201,7 +207,30 @@ class Vst3PlugViewProxyImpl : public Vst3PlugViewProxy {
     Steinberg::IPtr<Steinberg::IPlugFrame> plug_frame_;
 
    private:
+#ifdef __HAIKU__
+    /**
+     * Ask the Wine host for the shared memory object carrying this editor's
+     * frames, and point `editor_view_` at it.
+     *
+     * Called after attaching and again after a resize, since the object has to
+     * be laid out for the new frame size. Getting nothing back is not an
+     * error: the editor may not have drawn its first frame yet, and the next
+     * call picks it up.
+     */
+    void refresh_editor_surface();
+#endif
+
     Vst3PluginBridge& bridge_;
+
+#ifdef __HAIKU__
+    /**
+     * The view the bridged editor is painted into, living inside the parent
+     * view the host handed us in `attached()`. The editor cannot be embedded
+     * into that parent, so its pixels are copied across instead; see
+     * `plugin/editor-view-haiku.h`.
+     */
+    std::unique_ptr<BridgedEditorView> editor_view_;
+#endif
 
     /**
      * If the host supports `IRunLoop`, we'll use this to run certain tasks from

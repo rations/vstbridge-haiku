@@ -80,7 +80,11 @@ if is_haiku
   # from the build rather than deleted, so upstream changes still apply to them.
   # `editor-haiku.cpp` provides the same interface with no embedding; see the
   # comments at the top of `editor-haiku.h` for why embedding is impossible.
-  host_sources += files('editor-haiku.cpp')
+  host_sources += files(
+    '../common/editor-shm.cpp',
+    'editor-capture.cpp',
+    'editor-haiku.cpp',
+  )
 else
   host_sources += files(
     'editor.cpp',

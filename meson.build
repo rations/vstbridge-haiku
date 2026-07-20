@@ -168,11 +168,23 @@ endif
 # issues so we'll do just that.
 #
 # https://bugs.winehq.org/show_bug.cgi?id=49138
+#
+# The loader is invoked through its resolved path rather than as a bare `wine`,
+# because it locates `ntdll.so` relative to `argv[0]`. Its `get_self_exe()`
+# helper in `loader/main.c` only has branches for Linux, the BSDs and macOS and
+# returns NULL elsewhere, and the fallback then takes a dirname of `argv[0]`,
+# which yields nothing usable when the loader was found through `$PATH`.
+# Resolving the path up front avoids that, and is harmless where
+# `get_self_exe()` does work.
 wine_version = run_command(
-  'sh', '-c', '''wine --version | grep --only-matching -E '[0-9]+\.[0-9]+(-?rc[0-9]+)?' | head -n1''',
+  'sh', '-c', '''wine_bin=$(command -v wine) || exit 1
+"$wine_bin" --version | grep --only-matching -E '[0-9]+\.[0-9]+(-?rc[0-9]+)?' | head -n1''',
   check : false
 )
-if wine_version.returncode() == 0
+# An empty version would compare as lower than every version below, turning a
+# failure to detect Wine at all into a confidently wrong claim about which Wine
+# is installed
+if wine_version.returncode() == 0 and wine_version.stdout().strip() != ''
   wine_version = wine_version.stdout()
   message('Targetting Wine @0@'.format(wine_version))
 
@@ -312,10 +324,18 @@ if is_haiku
   # what the Haiku Wine patch in `tools/winegcc/winegcc.c` does -- but the
   # native plugin libraries are built with plain g++ and have to ask for it.
   network_dep = declare_dependency(link_args : '-lnetwork')
+
+  # The native plugin paints the bridged editor into a `BView` of its own,
+  # since the editor cannot be embedded into the host's window here, so it
+  # needs the Interface and Application Kits. The Wine host never touches
+  # BeAPI, and neither does anything on a non-Haiku build, so this is empty
+  # everywhere else.
+  be_dep = declare_dependency(link_args : '-lbe')
 else
   dl_dep = declare_dependency(link_args : '-ldl')
   rt_dep = declare_dependency(link_args : '-lrt')
   network_dep = declare_dependency()
+  be_dep = declare_dependency()
 endif
 
 wine_ole32_dep = declare_dependency(link_args : '-lole32')

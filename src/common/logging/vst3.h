@@ -138,6 +138,9 @@ class Vst3Logger {
     bool log_request(bool is_host_plugin,
                      const YaPlugView::IsPlatformTypeSupported&);
     bool log_request(bool is_host_plugin, const YaPlugView::Attached&);
+#ifdef __HAIKU__
+    bool log_request(bool is_host_plugin, const YaPlugView::GetEditorSurface&);
+#endif
     bool log_request(bool is_host_plugin, const YaPlugView::Removed&);
     bool log_request(bool is_host_plugin, const YaPlugView::OnWheel&);
     bool log_request(bool is_host_plugin, const YaPlugView::OnKeyDown&);
@@ -260,6 +263,10 @@ class Vst3Logger {
     void log_response(bool is_host_plugin,
                       const UniversalTResult&,
                       bool from_cache = false);
+#ifdef __HAIKU__
+    void log_response(bool is_host_plugin,
+                      const YaPlugView::GetEditorSurface::Response&);
+#endif
     void log_response(bool is_host_plugin,
                       const Vst3PluginFactoryProxy::ConstructArgs&);
     void log_response(

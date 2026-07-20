@@ -812,8 +812,10 @@ void Vst3Bridge::run() {
                         // if the plugin didn't embed itself in it.
                         if (result == Steinberg::kResultOk) {
                             Steinberg::ViewRect size{};
-                            if (instance.plug_view_instance->plug_view->getSize(
-                                    &size) == Steinberg::kResultOk) {
+                            const bool has_size =
+                                instance.plug_view_instance->plug_view->getSize(
+                                    &size) == Steinberg::kResultOk;
+                            if (has_size) {
                                 instance.editor->resize(size.getWidth(),
                                                         size.getHeight());
                             }
@@ -825,6 +827,26 @@ void Vst3Bridge::run() {
                             //       pointers when the window is already
                             //       visible. Thanks Waves.
                             instance.editor->show();
+
+#ifdef __HAIKU__
+                            // The editor cannot be embedded into the host's
+                            // window here, so its frames are published through
+                            // shared memory for the native side to paint
+                            // instead. Handing over the size the plugin just
+                            // reported lets the object be created now, so the
+                            // native side has something to map on the request
+                            // it makes right after this one returns.
+                            instance.editor->enable_surface(
+                                sockets_.base_dir_.filename().string() +
+                                    "-editor-" +
+                                    std::to_string(request.owner_instance_id),
+                                has_size
+                                    ? static_cast<uint16_t>(size.getWidth())
+                                    : 0,
+                                has_size
+                                    ? static_cast<uint16_t>(size.getHeight())
+                                    : 0);
+#endif
                         } else {
                             instance.editor.reset();
                         }
@@ -833,6 +855,23 @@ void Vst3Bridge::run() {
                     })
                     .get();
             },
+#ifdef __HAIKU__
+            [&](const YaPlugView::GetEditorSurface& request)
+                -> YaPlugView::GetEditorSurface::Response {
+                const auto& [instance, _] =
+                    get_instance(request.owner_instance_id);
+
+                // An absent config is normal rather than an error: the editor
+                // may not have drawn its first frame yet, and the native side
+                // will ask again
+                if (!instance.editor) {
+                    return YaPlugView::GetEditorSurface::Response{};
+                }
+
+                return YaPlugView::GetEditorSurface::Response{
+                    .config = instance.editor->surface_config()};
+            },
+#endif
             [&](const YaPlugView::Removed& request)
                 -> YaPlugView::Removed::Response {
                 return main_context_

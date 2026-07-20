@@ -23,6 +23,10 @@
 #include "../base.h"
 #include "../plug-frame-proxy.h"
 
+#ifdef __HAIKU__
+#include "../../../editor-shm.h"
+#endif
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
 
@@ -143,6 +147,41 @@ class YaPlugView : public Steinberg::IPlugView {
 
     virtual tresult PLUGIN_API attached(void* parent,
                                         Steinberg::FIDString type) override = 0;
+
+#ifdef __HAIKU__
+    /**
+     * Ask the Wine plugin host for the shared memory object carrying this
+     * editor's frames.
+     *
+     * This exists because the editor cannot be embedded into the host's window
+     * on Haiku -- app_server rejects a parent view token owned by another team
+     * -- so the editor's pixels are copied across the process boundary and
+     * painted into a `BView` on this side instead. See `common/editor-shm.h`.
+     *
+     * The plugin sends this after a successful `attached()`, and again whenever
+     * the editor's size has changed, since the object has to be laid out for
+     * the new frame size. An empty response means the host has no editor
+     * surface to offer, which is not an error: the editor may not have been
+     * created yet.
+     */
+    struct GetEditorSurface {
+        struct Response {
+            std::optional<EditorShmSurface::Config> config;
+
+            template <typename S>
+            void serialize(S& s) {
+                s.ext(config, bitsery::ext::InPlaceOptional{});
+            }
+        };
+
+        native_size_t owner_instance_id;
+
+        template <typename S>
+        void serialize(S& s) {
+            s.value8b(owner_instance_id);
+        }
+    };
+#endif
 
     /**
      * Message to pass through a call to `IPlugView::removed()` to the Wine
