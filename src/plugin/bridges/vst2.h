@@ -25,6 +25,10 @@
 #include "../../common/logging/vst2.h"
 #include "common.h"
 
+#ifdef __HAIKU__
+#include "../editor-view-haiku.h"
+#endif
+
 /**
  * This handles the communication between the Linux native VST2 plugin and the
  * Wine plugin host. The functions below should be used as callback functions in
@@ -192,6 +196,26 @@ class Vst2PluginBridge : PluginBridge<Vst2Sockets<std::jthread>> {
      * the dimensions of the editor window.
      */
     VstRect editor_rectangle_;
+
+#ifdef __HAIKU__
+    /**
+     * On Haiku the plugin's editor cannot be embedded into the host's window
+     * (app_server refuses a parent view token owned by another team). The Wine
+     * host publishes the editor's frames through shared memory and this view
+     * paints them into the `BView` the host passed to `effEditOpen`. See
+     * `plugin/editor-view-haiku.h`.
+     */
+    std::unique_ptr<BridgedEditorView> editor_view_;
+
+    /**
+     * Map (or remap) the shared-memory surface the Wine host publishes the
+     * editor's frames to, and point `editor_view_` at it. The surface name is
+     * derived from the shared socket directory; the dimensions come from the
+     * last `effEditGetRect`. A no-op until the editor has reported a size and
+     * the Wine host has created the object.
+     */
+    void refresh_editor_surface();
+#endif
 
     /**
      * Sending MIDI events sent to the host by the plugin using

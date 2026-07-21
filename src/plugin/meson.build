@@ -6,6 +6,7 @@ vst2_plugin_deps = [
   configuration_dep,
 
   asio_dep,
+  be_dep,
   bitsery_dep,
   dbus_dep,
   dl_dep,
@@ -72,6 +73,16 @@ vst2_plugin_sources = files(
   'utils.cpp',
   'vst2-plugin.cpp',
 )
+
+if is_haiku
+  # The editor's pixels are carried over shared memory instead of the editor
+  # window being embedded into the host's, which is impossible here. See the
+  # comments at the top of `common/editor-shm.h`.
+  vst2_plugin_sources += files(
+    '../common/editor-shm.cpp',
+    'editor-view-haiku.cpp',
+  )
+endif
 
 if with_clap
   clap_plugin_sources = files(

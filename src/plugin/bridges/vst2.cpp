@@ -610,6 +610,39 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
                 return -1;
             }
         } break;
+#ifdef __HAIKU__
+        case effEditOpen: {
+            // Forward to the Wine host first: it creates the editor's Win32
+            // window and starts publishing the editor's frames to shared
+            // memory. Then paint those frames into the `BView` the host passed
+            // as `data` -- nothing can be embedded into it directly on Haiku,
+            // as app_server refuses a parent view token owned by another team.
+            const intptr_t result = sockets_.host_plugin_dispatch_.send_event(
+                converter, std::pair<Vst2Logger&, bool>(logger_, true), opcode,
+                index, value, data, option);
+            if (data) {
+                editor_view_ = std::make_unique<BridgedEditorView>(
+                    logger_.logger_, [this]() { refresh_editor_surface(); });
+                if (editor_view_->attach_to(data)) {
+                    refresh_editor_surface();
+                } else {
+                    editor_view_.reset();
+                }
+            }
+
+            return result;
+        } break;
+        case effEditClose: {
+            if (editor_view_) {
+                editor_view_->detach();
+                editor_view_.reset();
+            }
+
+            return sockets_.host_plugin_dispatch_.send_event(
+                converter, std::pair<Vst2Logger&, bool>(logger_, true), opcode,
+                index, value, data, option);
+        } break;
+#endif
     }
 
     // We don't reuse any buffers here like we do for audio processing. This
@@ -621,6 +654,40 @@ intptr_t Vst2PluginBridge::dispatch(AEffect* /*plugin*/,
         converter, std::pair<Vst2Logger&, bool>(logger_, true), opcode, index,
         value, data, option);
 }
+
+#ifdef __HAIKU__
+void Vst2PluginBridge::refresh_editor_surface() {
+    if (!editor_view_) {
+        return;
+    }
+
+    // The Wine host names the surface after the shared socket directory (one
+    // plugin per bridge process for VST2); its dimensions are whatever the
+    // plugin last reported through `effEditGetRect`.
+    const uint16_t width = static_cast<uint16_t>(editor_rectangle_.right -
+                                                 editor_rectangle_.left);
+    const uint16_t height = static_cast<uint16_t>(editor_rectangle_.bottom -
+                                                  editor_rectangle_.top);
+    if (width == 0 || height == 0) {
+        // The editor has not reported a size yet; a later call picks it up.
+        return;
+    }
+
+    EditorShmSurface::Config config;
+    if (!EditorShmSurface::config_for(
+            sockets_.base_dir_.filename().string() + "-editor", width, height,
+            config)) {
+        return;
+    }
+
+    // The editor may not have published its first frame yet, in which case the
+    // object does not exist and `set_surface()` fails; the view's periodic
+    // request callback brings us back here to try again.
+    if (!editor_view_->has_surface_for(config)) {
+        editor_view_->set_surface(config);
+    }
+}
+#endif
 
 template <typename T, bool replacing>
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)

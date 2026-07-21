@@ -758,9 +758,14 @@ intptr_t Vst2Bridge::dispatch_wrapper(AEffect* plugin,
             //       https://codefn42.com/randarp/index.html
             VstRect* editor_rect = nullptr;
             plugin->dispatcher(plugin, effEditGetRect, 0, 0, &editor_rect, 0.0);
+            uint16_t editor_width = 0;
+            uint16_t editor_height = 0;
             if (editor_rect) {
-                editor_->resize(editor_rect->right - editor_rect->left,
-                                editor_rect->bottom - editor_rect->top);
+                editor_width =
+                    static_cast<uint16_t>(editor_rect->right - editor_rect->left);
+                editor_height =
+                    static_cast<uint16_t>(editor_rect->bottom - editor_rect->top);
+                editor_->resize(editor_width, editor_height);
             }
 
             // NOTE: There's zero reason why the window couldn't already be
@@ -768,6 +773,19 @@ intptr_t Vst2Bridge::dispatch_wrapper(AEffect* plugin,
             //       would be a splendid idea to randomly dereference null
             //       pointers when the window is already visible. Thanks Waves.
             editor_instance.show();
+
+#ifdef __HAIKU__
+            // The editor cannot be embedded into the host's window on Haiku:
+            // app_server refuses a parent view token owned by another team, so
+            // there is no X11-style reparenting. Publish the editor's frames
+            // through shared memory instead, for the native side to paint. The
+            // surface name is derived from the shared socket directory (one
+            // plugin per bridge process for VST2) so the native side can map it
+            // without a round-trip request.
+            editor_instance.enable_surface(
+                sockets_.base_dir_.filename().string() + "-editor", editor_width,
+                editor_height);
+#endif
 
             return result;
         } break;
