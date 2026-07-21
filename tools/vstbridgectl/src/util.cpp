@@ -216,10 +216,12 @@ std::vector<uint8_t> read_bytes(const fs::path& path) {
 }
 
 // Run a command and return its combined stdout output, or throw on failure
-static std::string run_command_output(const std::string& cmd,
-                                      const std::vector<std::string>& args,
-                                      bool clear_env = false,
-                                      const std::string& home_env = {}) {
+// Only used by the Wine-host probe in verify_wine_setup, which is compiled out on Haiku
+// (the probe is skipped there) — hence maybe_unused to keep that build warning-free.
+[[maybe_unused]] static std::string run_command_output(const std::string& cmd,
+                                                       const std::vector<std::string>& args,
+                                                       bool clear_env = false,
+                                                       const std::string& home_env = {}) {
     int pipefd[2];
     if (pipe(pipefd) != 0)
         throw std::runtime_error("pipe() failed");
@@ -266,9 +268,11 @@ static std::string run_command_output(const std::string& cmd,
     return output;
 }
 
-static int run_command_status(const std::string& cmd, const std::vector<std::string>& args,
-                              bool clear_env, const std::string& home_env,
-                              const std::string& argv0_override = {}) {
+// Only used by verify_path_setup's login-shell PATH probe, which is compiled out on Haiku.
+[[maybe_unused]] static int run_command_status(const std::string& cmd,
+                                               const std::vector<std::string>& args, bool clear_env,
+                                               const std::string& home_env,
+                                               const std::string& argv0_override = {}) {
     pid_t pid = fork();
     if (pid < 0)
         return -1;
@@ -304,6 +308,13 @@ static int run_command_status(const std::string& cmd, const std::vector<std::str
 }
 
 bool verify_path_setup() {
+#ifdef __HAIKU__
+    // On Haiku the host executable is reached through the chainloader stubs, not the login shell's
+    // PATH, so this probe (which spawns a login shell purely to print a warning) does not apply.
+    // Skip it — same reasoning as verify_wine_setup and the D-Bus check in
+    // verify_external_dependencies.
+    return true;
+#else
     // First check ~/.local/share/vstbridge directly (vstbridge always searches there)
     try {
         auto xdg_home = vstbridge_data_home();
@@ -378,9 +389,20 @@ bool verify_path_setup() {
                            "correctly.\n\nhttps://github.com/rations/vstbridge#usage")
               << "\n";
     return false;
+#endif
 }
 
 void verify_wine_setup(Config& config) {
+#ifdef __HAIKU__
+    // The Wine host binary (vstbridge-host.exe/.so) is only needed when a plugin is actually
+    // loaded, not to install chainloader stubs. On Haiku it is not placed in the Linux-style
+    // data-dir/PATH layout this probe searches, so locating and launching it here would make
+    // `sync` fail even though the stubs installed correctly. Any real host problem surfaces when
+    // the host is first started for a plugin. Skip the probe (same rationale as the D-Bus check in
+    // verify_external_dependencies below).
+    (void)config;
+    return;
+#else
     const char* wine_loader = std::getenv("WINELOADER");
     std::string wine_bin = wine_loader ? wine_loader : "wine";
 
@@ -475,9 +497,16 @@ void verify_wine_setup(Config& config) {
                          "vstbridge#troubleshooting-common-issues")
                   << "\n";
     }
+#endif
 }
 
 void verify_external_dependencies() {
+#ifdef __HAIKU__
+    // D-Bus is a Linux desktop service and is not part of Haiku, so its absence is the expected
+    // state here rather than a broken system. Warning about it would be noise on every command.
+    // Notifications on Haiku would go through BNotification instead.
+    return;
+#else
     void* handle = dlopen(LIBDBUS_NAME, RTLD_LAZY);
     if (!handle)
         handle = dlopen(LIBDBUS_FALLBACK, RTLD_LAZY);
@@ -492,6 +521,7 @@ void verify_external_dependencies() {
                            "already be installed on the system, so if you're seeing this warning "
                            "then something is probably very wrong.")
               << "\n";
+#endif
 }
 
 std::string wrap_text(const std::string& text) {
