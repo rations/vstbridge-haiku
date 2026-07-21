@@ -18,8 +18,13 @@
 
 #include <unistd.h>
 
+#ifdef __HAIKU__
+#include <FindDirectory.h>
+#endif
+
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -31,6 +36,18 @@
 
 // ─── XDG helpers ──────────────────────────────────────────────────────────────
 
+#ifdef __HAIKU__
+// Haiku keeps per-user settings and data under `/boot/home/config` rather than in the XDG
+// directories. `find_directory()` is the supported way to ask for those, since they follow the
+// boot volume instead of living at a fixed path.
+static std::optional<fs::path> haiku_directory(directory_which which) {
+    char path[B_PATH_NAME_LENGTH];
+    if (find_directory(which, /*volume=*/-1, /*createIt=*/false, path, sizeof(path)) != B_OK)
+        return std::nullopt;
+
+    return fs::path(path);
+}
+#else
 static fs::path xdg_config_home() {
     const char* v = std::getenv("XDG_CONFIG_HOME");
     if (v && v[0] != '\0')
@@ -50,13 +67,28 @@ static fs::path xdg_data_home() {
         throw std::runtime_error("$HOME is not set");
     return fs::path(home) / ".local" / "share";
 }
+#endif
 
 fs::path vstbridge_data_home() {
+#ifdef __HAIKU__
+    if (const auto data_dir = haiku_directory(B_USER_NONPACKAGED_DATA_DIRECTORY))
+        return *data_dir / "vstbridge";
+
+    throw std::runtime_error("Could not locate the user's non-packaged data directory");
+#else
     return xdg_data_home() / "vstbridge";
+#endif
 }
 
 fs::path vstbridgectl_config_dir() {
+#ifdef __HAIKU__
+    if (const auto settings_dir = haiku_directory(B_USER_SETTINGS_DIRECTORY))
+        return *settings_dir / "vstbridgectl";
+
+    throw std::runtime_error("Could not locate the user's settings directory");
+#else
     return xdg_config_home() / "vstbridgectl";
+#endif
 }
 
 fs::path vstbridge_vst2_home() {
@@ -218,12 +250,22 @@ VstbridgeFiles Config::files() const {
 
     // Standard library search directories
     static const std::vector<fs::path> lib_dirs = {
+#ifdef __HAIKU__
+        // Haiku has no /usr. Packaged libraries live under the read-only /boot/system/lib, so a
+        // hand-built chainloader can only be in one of the non-packaged trees or in the user's
+        // own lib directory. Ordered most- to least-specific to the user.
+        "/boot/home/config/non-packaged/lib",
+        "/boot/home/config/lib",
+        "/boot/system/non-packaged/lib",
+        "/boot/system/lib",
+#else
         "/usr/lib",
         "/usr/lib/x86_64-linux-gnu",
         "/usr/lib64",
         "/usr/local/lib",
         "/usr/local/lib/x86_64-linux-gnu",
         "/usr/local/lib64",
+#endif
     };
 
     fs::path vst2_chainloader;
@@ -250,7 +292,7 @@ VstbridgeFiles Config::files() const {
             } else {
                 throw std::runtime_error(
                     std::string("Could not find '") + VST2_CHAINLOADER_NAME +
-                    "' in either '/usr/lib' or '" + data_home.string() +
+                    "' in either '" + lib_dirs.front().string() + "' or '" + data_home.string() +
                     "'. You can override the default search path using 'vstbridgectl set "
                     "--path=<path>'.");
             }
