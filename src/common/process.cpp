@@ -25,6 +25,7 @@
 #include <sys/wait.h>
 
 #if defined(__HAIKU__) && !defined(__WINE__)
+#include <FindDirectory.h>
 #include <OS.h>
 #endif
 
@@ -112,6 +113,23 @@ std::vector<fs::path> get_augmented_search_path() {
 
     std::vector<fs::path> search_path = split_path(path_env);
 
+#if defined(__HAIKU__) && !defined(__WINE__)
+    // Haiku has no XDG directories, and a dot-folder under $HOME is not where
+    // anything here looks. The user's non-packaged data directory is the
+    // equivalent location, and it is the one `vstbridgectl` installs into --
+    // see `vstbridge_data_home()` in the tool. Asking `find_directory()` rather
+    // than hardcoding `/boot/home` keeps this correct on any boot volume.
+    //
+    // This is guarded off for the Winelib host, which compiles this same file
+    // with `__HAIKU__` defined but targeting Windows, where the Storage Kit is
+    // not available. That side never needs to locate the host binary anyway.
+    char data_directory[B_PATH_NAME_LENGTH];
+    if (find_directory(B_USER_NONPACKAGED_DATA_DIRECTORY, /*volume=*/-1,
+                       /*createIt=*/false, data_directory,
+                       sizeof(data_directory)) == B_OK) {
+        search_path.push_back(fs::path(data_directory) / "vstbridge");
+    }
+#else
     // NOLINTNEXTLINE(concurrency-mt-unsafe)
     if (const char* xdg_data_home = getenv("XDG_DATA_HOME")) {
         search_path.push_back(fs::path(xdg_data_home) / "vstbridge");
@@ -120,6 +138,7 @@ std::vector<fs::path> get_augmented_search_path() {
         search_path.push_back(fs::path(home_directory) / ".local" / "share" /
                               "vstbridge");
     }
+#endif
 
     return search_path;
 }

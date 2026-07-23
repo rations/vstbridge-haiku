@@ -59,14 +59,27 @@ void* find_plugin_library(const std::string& name) {
         // One last Hail Mary, in case ldconfig was not set up correctly. This
         // might be relevant for some of the `/usr/local/*` locations (although
         // you really, really shouldn't install yabridge there, please, thank
-        // you). Yabridgectl searches through these same directories.
+        // you). Vstbridgectl searches through these same directories.
         for (const auto& lib_dir : {
+#ifdef __HAIKU__
+                 // Haiku has no `/usr`. Packaged libraries live under the
+                 // read-only `/boot/system/lib`, so a hand-built or packaged
+                 // bridge can only be in one of the non-packaged trees or in
+                 // the user's own lib directory. Ordered most- to
+                 // least-specific to the user, matching `Config::files()` in
+                 // vstbridgectl so both halves agree on the search order.
+                 "/boot/home/config/non-packaged/lib",
+                 "/boot/home/config/lib",
+                 "/boot/system/non-packaged/lib",
+                 "/boot/system/lib",
+#else
                  "/usr/lib",
                  "/usr/lib/x86_64-linux-gnu",
                  "/usr/lib64",
                  "/usr/local/lib",
                  "/usr/local/lib/x86_64-linux-gnu",
                  "/usr/local/lib64",
+#endif
              }) {
             const fs::path candidate = fs::path(lib_dir) / name;
             if (void* handle =

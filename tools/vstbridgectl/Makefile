@@ -1,10 +1,24 @@
 # Makefile for yabridgectl
 # Dependencies are fetched automatically with 'make deps' or on first build.
 # Requirements: g++ (C++20), git
+#
+# The GUI target differs per platform. On Haiku it is the native Interface Kit
+# front-end in src/haiku (binary 'VSTBridge'); everywhere else it is the GTK3
+# one in src/gui (binary 'vstbridgectl-gtk'). The CLI is the same on both.
+
+UNAME_S := $(shell uname -s)
 
 CXX      ?= g++
 CXXFLAGS := -std=c++20 -O2 -Wall -Wextra $(CXXFLAGS)
+
+ifeq ($(UNAME_S),Haiku)
+# Haiku has no libdl — dlopen and friends live in libroot, and there is no
+# /boot/system/develop/lib/libdl.a to link against. Passing -ldl here only ever
+# worked because of a hand-made stub archive in the non-packaged tree.
+LDFLAGS  := -lpthread $(LDFLAGS)
+else
 LDFLAGS  := -ldl -lpthread $(LDFLAGS)
+endif
 
 BUILD_DIR := build
 DEP_DIR   := deps
@@ -36,12 +50,8 @@ OBJS := $(patsubst src/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 
 TARGET := $(BUILD_DIR)/vstbridgectl
 
-GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
-GTK_LIBS   := $(shell pkg-config --libs   gtk+-3.0 2>/dev/null)
-
-GUI_OBJS := \
-	$(BUILD_DIR)/gui_main.o \
-	$(BUILD_DIR)/gui/app_window.o \
+# Object files shared by the CLI and whichever GUI is being built.
+CORE_OBJS := \
 	$(BUILD_DIR)/config.o \
 	$(BUILD_DIR)/files.o \
 	$(BUILD_DIR)/util.o \
@@ -50,7 +60,38 @@ GUI_OBJS := \
 	$(BUILD_DIR)/actions.o \
 	$(BUILD_DIR)/actions/blacklist.o
 
-GUI_TARGET := $(BUILD_DIR)/vstbridgectl-gtk
+# ─── GUI: Haiku (Interface Kit) ───────────────────────────────────────────────
+
+# -lbe for the Interface/Application kits, -ltracker for BFilePanel, which
+# libbe does not export.
+HAIKU_GUI_LIBS   := -lbe -ltracker
+HAIKU_GUI_OBJS   := \
+	$(BUILD_DIR)/haiku/main.o \
+	$(BUILD_DIR)/haiku/VstbridgeApp.o \
+	$(BUILD_DIR)/haiku/MainWindow.o \
+	$(BUILD_DIR)/haiku/ActionRunner.o \
+	$(BUILD_DIR)/haiku/OutputView.o \
+	$(CORE_OBJS)
+HAIKU_GUI_TARGET := $(BUILD_DIR)/VSTBridge
+HAIKU_RDEF       := VSTBridge.rdef
+
+# ─── GUI: GTK3 (everything else) ──────────────────────────────────────────────
+
+GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
+GTK_LIBS   := $(shell pkg-config --libs   gtk+-3.0 2>/dev/null)
+
+GTK_GUI_OBJS := \
+	$(BUILD_DIR)/gui_main.o \
+	$(BUILD_DIR)/gui/app_window.o \
+	$(CORE_OBJS)
+
+GTK_GUI_TARGET := $(BUILD_DIR)/vstbridgectl-gtk
+
+ifeq ($(UNAME_S),Haiku)
+GUI_TARGET := $(HAIKU_GUI_TARGET)
+else
+GUI_TARGET := $(GTK_GUI_TARGET)
+endif
 
 .PHONY: all deps clean install
 
@@ -89,7 +130,24 @@ $(BUILD_DIR)/actions:
 $(BUILD_DIR)/gui:
 	mkdir -p $@
 
-# ─── GUI-specific build rules (need GTK_CFLAGS) ───────────────────────────────
+$(BUILD_DIR)/haiku:
+	mkdir -p $@
+
+# ─── Haiku GUI build rules ────────────────────────────────────────────────────
+
+$(BUILD_DIR)/haiku/%.o: src/haiku/%.cpp | $(BUILD_DIR)/haiku deps
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+# Link, then compile the resource definitions and attach them to the binary, the
+# same order Haiku's own makefile-engine uses. mimeset stamps the file type from
+# the attached app_signature, which is what puts the app in Deskbar's list.
+$(HAIKU_GUI_TARGET): $(HAIKU_GUI_OBJS) $(HAIKU_RDEF)
+	$(CXX) $(CXXFLAGS) -o $@ $(HAIKU_GUI_OBJS) $(LDFLAGS) $(HAIKU_GUI_LIBS)
+	rc -o $(BUILD_DIR)/VSTBridge.rsrc $(HAIKU_RDEF)
+	xres -o $@ $(BUILD_DIR)/VSTBridge.rsrc
+	mimeset -f $@
+
+# ─── GTK GUI build rules (need GTK_CFLAGS) ────────────────────────────────────
 
 $(BUILD_DIR)/gui_main.o: src/gui_main.cpp | $(BUILD_DIR) deps
 	$(CXX) $(CXXFLAGS) $(GTK_CFLAGS) $(INCLUDES) -c $< -o $@
@@ -97,14 +155,24 @@ $(BUILD_DIR)/gui_main.o: src/gui_main.cpp | $(BUILD_DIR) deps
 $(BUILD_DIR)/gui/app_window.o: src/gui/app_window.cpp | $(BUILD_DIR)/gui deps
 	$(CXX) $(CXXFLAGS) $(GTK_CFLAGS) $(INCLUDES) -c $< -o $@
 
-$(GUI_TARGET): $(GUI_OBJS)
+$(GTK_GUI_TARGET): $(GTK_GUI_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(GTK_LIBS)
 
 # ─── Install / clean ──────────────────────────────────────────────────────────
 
-install: $(TARGET) $(GUI_TARGET)
+ifeq ($(UNAME_S),Haiku)
+# Installation on Haiku is the .hpkg built by packaging/make-hpkg.sh, which
+# places the GUI in apps/ and the CLI in bin/. There is no install-into-PREFIX
+# equivalent, so this target only exists to say so.
+install:
+	@echo "On Haiku, build and install the package instead:"
+	@echo "    sh ../../packaging/make-hpkg.sh"
+	@false
+else
+install: $(TARGET) $(GTK_GUI_TARGET)
 	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/vstbridgectl
-	install -Dm755 $(GUI_TARGET) $(DESTDIR)$(PREFIX)/bin/vstbridgectl-gtk
+	install -Dm755 $(GTK_GUI_TARGET) $(DESTDIR)$(PREFIX)/bin/vstbridgectl-gtk
+endif
 
 clean:
 	rm -rf $(BUILD_DIR)

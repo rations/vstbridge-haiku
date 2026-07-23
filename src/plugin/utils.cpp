@@ -232,7 +232,8 @@ fs::path find_plugin_library(const fs::path& this_plugin_path,
             // Finding the Windows plugin consists of two steps because
             // Steinberg changed the format around:
             // - First we'll find the plugin in the VST3 bundle created by
-            //   vstbridgectl in `~/.vst3/vstbridge`. The plugin can be either
+            //   vstbridgectl in the canonical add-ons/media/VST3/vstbridge
+            //   directory (a dot-folder on non-Haiku hosts). The plugin can be either
             //   32-bit or 64-bit. If both exist, then we'll take the 64-bit
             //   version, unless the `vst3_prefer_32bit` vstbridge.toml option
             //   has been enabled for this plugin.

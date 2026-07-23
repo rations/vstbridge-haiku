@@ -91,21 +91,46 @@ fs::path vstbridgectl_config_dir() {
 #endif
 }
 
+// On Haiku the generated native stubs install into the canonical add-on media
+// directories under the user's non-packaged add-ons tree
+// (~/config/non-packaged/add-ons/media/<format>/vstbridge), the same locations
+// the DAW and the media system search — never a dot-folder. The `vstbridge`
+// leaf keeps our stubs grouped and easy to sweep on uninstall.
 fs::path vstbridge_vst2_home() {
+#ifdef __HAIKU__
+    if (const auto addons = haiku_directory(B_USER_NONPACKAGED_ADDONS_DIRECTORY))
+        return *addons / "media" / "vstplugins" / "vstbridge";
+
+    throw std::runtime_error("Could not locate the user's non-packaged add-ons directory");
+#else
     const char* home = std::getenv("HOME");
     if (!home)
         throw std::runtime_error("$HOME is not set");
     return fs::path(home) / ".vst" / "vstbridge";
+#endif
 }
 
 fs::path vstbridge_vst3_home() {
+#ifdef __HAIKU__
+    if (const auto addons = haiku_directory(B_USER_NONPACKAGED_ADDONS_DIRECTORY))
+        return *addons / "media" / "VST3" / "vstbridge";
+
+    throw std::runtime_error("Could not locate the user's non-packaged add-ons directory");
+#else
     const char* home = std::getenv("HOME");
     if (!home)
         throw std::runtime_error("$HOME is not set");
     return fs::path(home) / ".vst3" / "vstbridge";
+#endif
 }
 
 fs::path vstbridge_clap_home() {
+#ifdef __HAIKU__
+    if (const auto addons = haiku_directory(B_USER_NONPACKAGED_ADDONS_DIRECTORY))
+        return *addons / "media" / "CLAP" / "vstbridge";
+
+    throw std::runtime_error("Could not locate the user's non-packaged add-ons directory");
+#else
     const char* clap_path_env = std::getenv("CLAP_PATH");
     if (clap_path_env && clap_path_env[0] != '\0') {
         std::string cp(clap_path_env);
@@ -117,6 +142,7 @@ fs::path vstbridge_clap_home() {
     if (!home)
         throw std::runtime_error("$HOME is not set");
     return fs::path(home) / ".clap" / "vstbridge";
+#endif
 }
 
 std::optional<fs::path> which(const std::string& name) {

@@ -1,0 +1,29 @@
+/* Resources for the native Haiku front-end to vstbridgectl.
+ *
+ * Attached to the binary after linking with:
+ *     rc -o VSTBridge.rsrc VSTBridge.rdef
+ *     xres -o VSTBridge VSTBridge.rsrc
+ *     mimeset -f VSTBridge
+ *
+ * The signature is duplicated in src/haiku/VstbridgeApp.h, which is what the
+ * BApplication constructor passes; keep the two in step.
+ *
+ * TODO: no vector_icon yet, so the app shows the generic executable icon in
+ * Tracker and Deskbar. Authoring one needs Icon-O-Matic.
+ */
+
+resource app_signature "application/x-vnd.vstbridge";
+
+resource app_flags B_SINGLE_LAUNCH;
+
+resource app_version {
+	major  = 0,
+	middle = 1,
+	minor  = 0,
+
+	variety = B_APPV_DEVELOPMENT,
+	internal = 0,
+
+	short_info = "VSTBridge",
+	long_info = "Manage Windows VST2, VST3 and CLAP plug-ins bridged through Wine"
+};

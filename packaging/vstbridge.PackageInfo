@@ -1,0 +1,31 @@
+name			vstbridge
+version			0.1.0-1
+architecture	x86_64
+summary			"Wine bridge for Windows VST2/VST3/CLAP plug-ins on Haiku"
+description		"Runs Windows VST2, VST3 and CLAP plug-ins on Haiku by hosting them
+under Wine and presenting each as a native Haiku add-on the DAW loads through the normal
+add-ons/media search path. Ships 'VSTBridge', a native Interface Kit application, and the
+equivalent command-line 'vstbridgectl'; either one syncs a native stub per installed Windows
+plug-in into add-ons/media/{vstplugins,VST3,CLAP}/vstbridge. Also ships the chainloader and
+bridge libraries and the Wine host they launch. This build covers VST2 and VST3; the CLAP
+libraries are not built on Haiku yet."
+packager		"rations <ehqcar@proton.me>"
+vendor			"rations"
+copyrights {
+	"2020-2024 Robbert van der Helm (yabridge)"
+	"2026 rations"
+}
+licenses {
+	"GNU GPL v3"
+}
+provides {
+	vstbridge = 0.1.0
+	cmd:vstbridgectl = 0.1.0
+}
+requires {
+	haiku
+	wine
+}
+urls {
+	"https://github.com/rations/vstbridge-haiku"
+}

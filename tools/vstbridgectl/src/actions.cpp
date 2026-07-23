@@ -264,7 +264,7 @@ void do_sync(Config& config, const SyncOptions& opts) {
     auto vst3_home = vstbridge_vst3_home();
     auto clap_home = vstbridge_clap_home();
 
-    auto bail_if_unsafe = [&](const fs::path& plugin_home, const char* display) {
+    auto bail_if_unsafe = [&](const fs::path& plugin_home) {
         std::error_code ec;
         auto canon = fs::canonical(plugin_home, ec);
         if (ec || canon == plugin_home)
@@ -273,17 +273,17 @@ void do_sync(Config& config, const SyncOptions& opts) {
             std::error_code dec;
             auto dir_canon = fs::canonical(dir, dec);
             if (!dec && dir_canon.string().find(canon.string()) == 0) {
-                throw std::runtime_error(std::string("'") + display + "' is a symlink to '" +
-                                         canon.string() + "'. This conflicts with '" +
-                                         dir.string() +
+                throw std::runtime_error(std::string("'") + plugin_home.string() +
+                                         "' is a symlink to '" + canon.string() +
+                                         "'. This conflicts with '" + dir.string() +
                                          "' from your plugin directories, so the syncing process "
                                          "will now be aborted.");
             }
         }
     };
-    bail_if_unsafe(vst2_home, "~/.vst/vstbridge");
-    bail_if_unsafe(vst3_home, "~/.vst3/vstbridge");
-    bail_if_unsafe(clap_home, "~/.clap/vstbridge");
+    bail_if_unsafe(vst2_home);
+    bail_if_unsafe(vst3_home);
+    bail_if_unsafe(clap_home);
 
     std::unordered_set<std::string> managed_plugins;
     std::unordered_set<std::string> new_plugins;

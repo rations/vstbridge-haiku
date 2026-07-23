@@ -27,7 +27,8 @@
  *
  * - First we'll try to locate `vstbridge-host.exe` using the same method used by
  *   the vstbridge plugin bridges themselves. We'll search in `$PATH`, followed
- *   by `${XDG_DATA_HOME:-$HOME/.local/share}/vstbridge`. If that file exists and
+ *   by vstbridge's data directory (see `get_augmented_search_path()`; on Haiku
+ *   the user's non-packaged data directory). If that file exists and
  *   the target plugin library exists right next to it, then we'll use that.
  * - For compatibility with 32-bit only builds of vstbridge, we'll repeat this
  *   process for `vstbridge-host-32.exe`.

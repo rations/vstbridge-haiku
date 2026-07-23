@@ -194,7 +194,7 @@ std::string create_logger_prefix(
  *      This is useful when developing, as you can simply symlink the
  *      `libvstbridge-{clap,vst2,vst3}.so` file in the build directory without
  *      having to install anything to /usr.
- *   2. In the regular search path, augmented with `~/.local/share/vstbridge` to
+ *   2. In the regular search path, augmented with vstbridge's data directory to
  *      ease the setup process.
  *
  * @param this_plugin_path The path to the `.so` file this code is being run

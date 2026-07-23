@@ -46,9 +46,11 @@
 bool pid_running(pid_t pid);
 
 /**
- * Return the search path as defined in `$PATH`, with `~/.local/share/vstbridge`
- * appended to the end. Even though it likely won't be set, this does respect
- * `$XDG_DATA_HOME`. I'd rather not do this since more magic makes things harder
+ * Return the search path as defined in `$PATH`, with vstbridge's data directory
+ * appended to the end. On Haiku that is the user's non-packaged data directory
+ * from `find_directory()`; elsewhere it is `~/.local/share/vstbridge`, which
+ * does respect `$XDG_DATA_HOME` even though it likely won't be set. I'd rather
+ * not do this since more magic makes things harder
  * to comprehend, but I can understand that modifying your login shell's `PATH`
  * environment variable can be a big hurdle if you've never done anything like
  * that before. And since this is the recommended installation location, it
