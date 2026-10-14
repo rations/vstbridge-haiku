@@ -121,6 +121,12 @@ Configuration::Configuration(const fs::path& config_path,
                 } else {
                     invalid_options.emplace_back(key);
                 }
+            } else if (key == "editor_popup_fix") {
+                if (const auto parsed_value = value.as_boolean()) {
+                    editor_popup_fix = parsed_value->get();
+                } else {
+                    invalid_options.emplace_back(key);
+                }
             } else if (key == "frame_rate") {
                 if (const auto parsed_value = value.as_floating_point()) {
                     frame_rate = parsed_value->get();

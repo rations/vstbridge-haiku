@@ -79,6 +79,40 @@ class DeferredWin32Window {
 };
 
 /**
+ * Keeps Wine from handing plugin popup windows (like JUCE's popup menus) to a
+ * window manager, for as long as at least one enabled instance exists. JUCE
+ * creates its popup menus with `WS_POPUP | WS_SYSMENU`, and Wine treats a
+ * popup with a system menu as a managed top level window, which with Wine 10.x
+ * and later makes the menu close again right after it opens. We strip
+ * `WS_SYSMENU` from captionless, non-resizable top level popup windows created
+ * on the GUI thread. Off unless the `editor_popup_fix` option is set; see that
+ * option for why it is not on by default here.
+ *
+ * Based on a patch by singularity098, ported from the Linux vstbridge.
+ */
+class PopupStyleFixer {
+   public:
+    /**
+     * Install the `WH_CBT` hook on the current thread if `enabled` is set and
+     * this is the first enabled instance.
+     */
+    PopupStyleFixer(bool enabled, Logger& logger);
+
+    /**
+     * Remove the hook again when this is the last enabled instance.
+     */
+    ~PopupStyleFixer() noexcept;
+
+    PopupStyleFixer(const PopupStyleFixer&) = delete;
+    PopupStyleFixer& operator=(const PopupStyleFixer&) = delete;
+    PopupStyleFixer(PopupStyleFixer&&) = delete;
+    PopupStyleFixer& operator=(PopupStyleFixer&&) = delete;
+
+   private:
+    bool enabled_;
+};
+
+/**
  * Creates the Win32 window a hosted plugin embeds its own editor into. Mirrors
  * the public surface of the X11 `Editor` so the bridges do not need to know
  * which platform they were built for, but performs no reparenting: the window
@@ -269,4 +303,12 @@ class Editor {
      * start dumping again.
      */
     uint32_t captured_frames_ = 0;
+
+    /**
+     * Keeps plugin popup windows from being managed by a window manager while
+     * this editor is open, when `editor_popup_fix` is set. The last member, so
+     * the hook is installed after `win32_window_` has been created and removed
+     * first.
+     */
+    PopupStyleFixer popup_style_fixer_;
 };

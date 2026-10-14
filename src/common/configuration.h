@@ -125,6 +125,22 @@ class Configuration {
     bool editor_xembed = false;
 
     /**
+     * Strip `WS_SYSMENU` from captionless top level popup windows created by
+     * the plugin while an editor is open. JUCE creates its popup menus as
+     * `WS_POPUP | WS_SYSMENU`, and with Wine 10.x and later winex11 hands such
+     * a window to the window manager, which closes the menu again right after
+     * it opens (Superior Drummer 3, EZdrummer 3, Hofa plugins). See
+     * `PopupStyleFixer` in `editor-haiku.h`.
+     *
+     * Disabled by default on Haiku. The bridge normally runs with Wine's null
+     * graphics driver and captures the editor window into the host, so a
+     * plugin's popup windows never reach the screen and there is no window
+     * manager to confuse. It only matters for a prefix with a visible graphics
+     * driver, and has not been tested there.
+     */
+    bool editor_popup_fix = false;
+
+    /**
      * The number of times per second we'll handle the event loop. In most
      * plugins this also controls the plugin editor GUI's refresh rate.
      *
@@ -204,6 +220,7 @@ class Configuration {
         s.value1b(editor_coordinate_hack);
         s.value1b(editor_force_dnd);
         s.value1b(editor_xembed);
+        s.value1b(editor_popup_fix);
         s.ext(frame_rate, bitsery::ext::InPlaceOptional(),
               [](S& s, auto& v) { s.value4b(v); });
         s.value1b(hide_daw);

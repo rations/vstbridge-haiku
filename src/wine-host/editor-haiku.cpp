@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 // Wine's internal `ntuser.h` does not compile as C++, so the input injection
 // lives behind a small C shim
@@ -209,6 +210,70 @@ DeferredWin32Window::~DeferredWin32Window() noexcept {
     }
 }
 
+namespace {
+
+bool popup_fix_tracing = false;
+int popup_fix_users = 0;
+HHOOK popup_fix_hook = nullptr;
+
+LRESULT CALLBACK popup_fix_cbt_proc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code == HCBT_CREATEWND) {
+        const HWND window = reinterpret_cast<HWND>(wParam);
+        const LONG style = GetWindowLong(window, GWL_STYLE);
+        const LONG ex_style = GetWindowLong(window, GWL_EXSTYLE);
+
+        // Only captionless, non-resizable popup windows that are not supposed
+        // to show up in the task bar. Regular plugin windows and dialogs are
+        // left alone.
+        if (!(style & WS_CHILD) && (style & WS_POPUP) &&
+            (style & WS_CAPTION) != WS_CAPTION && !(style & WS_THICKFRAME) &&
+            (style & WS_SYSMENU) && !(ex_style & WS_EX_APPWINDOW)) {
+            SetWindowLong(window, GWL_STYLE, style & ~WS_SYSMENU);
+
+            // This goes to STDERR instead of through a `Logger` since the hook
+            // can outlive the editor that installed it. STDERR gets captured
+            // and logged by the plugin side.
+            if (popup_fix_tracing) {
+                std::cerr << "DEBUG: Removed WS_SYSMENU from popup window "
+                          << window << std::hex << " (style 0x" << style
+                          << ", exstyle 0x" << ex_style << std::dec
+                          << ") so Wine won't let a window manager manage it"
+                          << std::endl;
+            }
+        }
+    }
+
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+}  // namespace
+
+PopupStyleFixer::PopupStyleFixer(bool enabled, Logger& logger)
+    : enabled_(enabled) {
+    if (!enabled_) {
+        return;
+    }
+
+    // All editors live on the same GUI thread, so a single thread-local hook
+    // shared between them is enough
+    if (popup_fix_users++ == 0) {
+        popup_fix_tracing = logger.editor_tracing_;
+        popup_fix_hook = SetWindowsHookEx(WH_CBT, popup_fix_cbt_proc, nullptr,
+                                          GetCurrentThreadId());
+    }
+}
+
+PopupStyleFixer::~PopupStyleFixer() noexcept {
+    if (!enabled_ || --popup_fix_users > 0) {
+        return;
+    }
+
+    if (popup_fix_hook) {
+        UnhookWindowsHookEx(popup_fix_hook);
+        popup_fix_hook = nullptr;
+    }
+}
+
 Editor::Editor(MainContext& main_context,
                const Configuration& config,
                Logger& logger,
@@ -241,7 +306,8 @@ Editor::Editor(MainContext& main_context,
       // `win32_window_` is declared before this, so its handle is already
       // valid here. It may still be null if window creation failed, which
       // `EditorCapture` tolerates by never capturing anything.
-      capture_(logger, win32_window_.handle_) {
+      capture_(logger, win32_window_.handle_),
+      popup_style_fixer_(config.editor_popup_fix, logger) {
     if (!win32_window_.handle_) {
         logger_.log("Could not create the plugin's editor window");
         return;
