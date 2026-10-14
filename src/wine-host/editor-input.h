@@ -54,6 +54,18 @@ BOOL vstbridge_send_mouse_input(HWND window,
                                 DWORD mouse_data);
 
 /**
+ * Hand Wine any mouse motion it is still holding back for `window`.
+ *
+ * Since Wine 11.13, `NtUserSendHardwareInput()` coalesces plain pointer motion
+ * per thread and only passes it on with the next button or wheel event, or
+ * when the driver ends a batch of events with a lone
+ * `MOUSEEVENTF_MOVE_NOCOALESCE` input, as winex11 and winewayland do. Without
+ * this, a drag or a hover would only reach the plugin on the next click. Call
+ * it once after each batch of mouse events.
+ */
+BOOL vstbridge_flush_mouse_input(HWND window);
+
+/**
  * Send a key event to `window`.
  *
  * @param virtual_key A Win32 `VK_*` code.

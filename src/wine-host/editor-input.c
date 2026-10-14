@@ -43,6 +43,16 @@ BOOL vstbridge_send_mouse_input(HWND window,
     return NtUserSendHardwareInput(window, 0, &input, 0);
 }
 
+BOOL vstbridge_flush_mouse_input(HWND window) {
+    INPUT input;
+
+    memset(&input, 0, sizeof(input));
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE_NOCOALESCE;
+
+    return NtUserSendHardwareInput(window, 0, &input, 0);
+}
+
 BOOL vstbridge_send_key_input(HWND window, WORD virtual_key, DWORD flags) {
     INPUT input;
 

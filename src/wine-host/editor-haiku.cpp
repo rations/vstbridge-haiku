@@ -515,6 +515,7 @@ void Editor::drain_input() {
         GetWindowRect(win32_window_.handle_, &window_rect) &&
         ClientToScreen(win32_window_.handle_, &client_origin);
 
+    bool sent_mouse = false;
     EditorInputEvent event{};
     while (surface_->pop_input(event)) {
         // Everything in the mapping is untrusted, so an unrecognised event is
@@ -526,6 +527,7 @@ void Editor::drain_input() {
             case EditorInputType::mouse_wheel:
                 if (have_position) {
                     inject_mouse(event, client_origin);
+                    sent_mouse = true;
                 }
                 break;
             case EditorInputType::key_down:
@@ -535,6 +537,12 @@ void Editor::drain_input() {
             default:
                 break;
         }
+    }
+
+    // Wine holds plain pointer motion back until the batch is ended, the way
+    // its own drivers end theirs; see `vstbridge_flush_mouse_input()`
+    if (sent_mouse) {
+        vstbridge_flush_mouse_input(win32_window_.handle_);
     }
 }
 
