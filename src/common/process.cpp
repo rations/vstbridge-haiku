@@ -371,7 +371,7 @@ Process::StringResult Process::spawn_get_stdout_line() const {
     } else {
         // `fgets()` returns the line feed, so we'll get rid of that
         std::string output_str(output.data());
-        if (output_str.back() == '\n') {
+        if (!output_str.empty() && output_str.back() == '\n') {
             output_str.pop_back();
         }
 
