@@ -152,8 +152,12 @@ extern "C" VSTBRIDGE_EXPORT bool ModuleExit() {
 }
 
 extern "C" VSTBRIDGE_EXPORT PluginFactory* GetPluginFactory() {
-    // The host should have called `InitModule()` first
-    assert(bridge);
+    // The host should have called `InitModule()` first. A host that calls this
+    // even though that failed (the Wine plugin host didn't start) gets no
+    // factory instead of a crash.
+    if (!bridge) {
+        return nullptr;
+    }
 
     return vstbridge_module_get_plugin_factory(bridge.get());
 }

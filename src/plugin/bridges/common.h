@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <future>
 #include <iomanip>
 
@@ -381,6 +382,14 @@ class PluginBridge {
         // and throw when it is not. The alternative would be to rewrite this to
         // using `async_accept`, Asio timers, and another IO context, but
         // I feel like this a much simpler solution.
+        //
+        // The watchdog can't throw into this thread, and it used to call
+        // `std::terminate()`, which took the DAW down with the plugin (a plugin
+        // that fails to load in the Wine host, such as an iLok-protected one
+        // that found no license, ends the host). Instead it wakes up the
+        // blocking `sockets_.connect()` by connecting to the sockets itself and
+        // hanging up, and we throw below, which the plugin's entry point
+        // reports as a plugin that failed to load.
         host_watchdog_handler_ = std::jthread([&](std::stop_token st) {
             using namespace std::literals::chrono_literals;
 
@@ -402,7 +411,9 @@ class PluginBridge {
                         "see the error.",
                         info_.native_library_path_);
 
-                    std::terminate();
+                    host_exited_ = true;
+                    abandon_connect();
+                    return;
                 }
 
                 std::this_thread::sleep_for(20ms);
@@ -413,7 +424,35 @@ class PluginBridge {
         sockets_.connect();
 #ifndef WITH_WINEDBG
         host_watchdog_handler_.request_stop();
+        host_watchdog_handler_.join();
+        if (host_exited_) {
+            throw std::runtime_error(
+                "The Wine plugin host exited before it connected");
+        }
 #endif
+    }
+
+    /**
+     * Wake up `sockets_.connect()` once the Wine plugin host has exited
+     * without connecting: connect to each socket we're still listening on and
+     * hang up at once, so every pending `accept()` returns.
+     */
+    void abandon_connect() noexcept {
+        asio::io_context context;
+        std::error_code err;
+        for (ghc::filesystem::directory_iterator it(sockets_.base_dir_, err), end;
+             !err && it != end; it.increment(err)) {
+            if (it->path().extension() != ".sock") {
+                continue;
+            }
+
+            std::error_code socket_err;
+            asio::local::stream_protocol::socket socket(context);
+            socket.connect(
+                asio::local::stream_protocol::endpoint(it->path().string()),
+                socket_err);
+            socket.close(socket_err);
+        }
     }
 
     /**
@@ -512,4 +551,10 @@ class PluginBridge {
      * running.
      */
     std::jthread host_watchdog_handler_;
+
+    /**
+     * Set by `host_watchdog_handler_` when the Wine plugin host exited before
+     * connecting, so that `connect_sockets_guarded()` throws.
+     */
+    std::atomic_bool host_exited_ = false;
 };
