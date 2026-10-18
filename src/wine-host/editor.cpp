@@ -1006,7 +1006,12 @@ bool Editor::is_mouse_button_held() const {
                                 &error));
     THROW_X11_ERROR(error);
 
-    return pointer_query_reply->mask != 0;
+    // NOTE: The mask also contains the keyboard modifier and lock state, so
+    //       with Num Lock enabled it would never be zero and the spooled
+    //       coordinate fix would never be performed. Only look at the buttons.
+    return pointer_query_reply->mask &
+           (XCB_BUTTON_MASK_1 | XCB_BUTTON_MASK_2 | XCB_BUTTON_MASK_3 |
+            XCB_BUTTON_MASK_4 | XCB_BUTTON_MASK_5);
 }
 
 bool Editor::is_wine_window_active() const {
