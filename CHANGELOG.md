@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic
 Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-21
+
+This release brings in the changes from vstbridge 0.0.3 that apply to Haiku.
+
+### Added
+
+- Added an `environment` option to `vstbridge.toml`. It sets extra environment
+  variables for a plug-in's Wine host process, such as per-plug-in
+  `WINEDLLOVERRIDES`, so plug-ins with different requirements can share one
+  Wine prefix. The variables are also shown in the startup log.
+- Added a Plugins tab to VSTBridge for changing a plug-in's settings without
+  editing `vstbridge.toml` by hand: the plug-in group, the popup menu fix, host
+  HiDPI scaling, hiding the DAW's name, preferring a VST3's 32-bit version, the
+  editor frame rate and Wine environment variables. It only rewrites that
+  plug-in's section, so comments and other sections are kept.
+
+### Fixed
+
+- A plug-in whose Wine host exits before it connects, for example because the
+  plug-in has no license and fails to load, now fails to load in the host
+  instead of ending the host's process.
+- A plug-in host that hasn't exited 5 seconds after it was asked to is now
+  killed, so a plug-in that hangs while unloading no longer hangs the host or
+  its plug-in scanner.
+- Fixed a crash when `wine --version` prints nothing.
+
 ## [5.1.1] - 2024-11-04
 
 ### Fixed

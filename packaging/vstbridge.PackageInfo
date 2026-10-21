@@ -1,5 +1,5 @@
 name			vstbridge
-version			0.2.0-1
+version			0.3.0-1
 architecture	x86_64
 summary			"Wine bridge for Windows VST2/VST3/CLAP plug-ins on Haiku"
 description		"Runs Windows VST2, VST3 and CLAP plug-ins on Haiku by hosting them
@@ -19,8 +19,8 @@ licenses {
 	"GNU GPL v3"
 }
 provides {
-	vstbridge = 0.2.0
-	cmd:vstbridgectl = 0.2.0
+	vstbridge = 0.3.0
+	cmd:vstbridgectl = 0.3.0
 }
 requires {
 	haiku
