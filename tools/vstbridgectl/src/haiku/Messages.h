@@ -45,6 +45,22 @@ enum {
     MSG_BL_REMOVE = 'brem',
     MSG_BL_CLEAR = 'bclr',
 
+    // Plugins tab. MSG_PLUGINS_SCANNED comes from the scanning thread and
+    // carries a "rows" pointer the window takes ownership of, and an "error"
+    // string. MSG_PLUGIN_SETTINGS_CHANGED comes from PluginSettingsWindow
+    // with the "index" it was opened for.
+    MSG_PLUGINS_TAB_SHOWN = 'ptab',
+    MSG_PLUGINS_REFRESH = 'prfs',
+    MSG_PLUGINS_SCANNED = 'pscn',
+    MSG_PLUGIN_CONFIGURE = 'pcfg',
+    MSG_PLUGIN_SETTINGS_CHANGED = 'pchg',
+
+    // PluginSettingsWindow's own controls.
+    MSG_PLUGIN_FRAME_RATE_TOGGLED = 'pfps',
+    MSG_PLUGIN_SETTINGS_SAVE = 'psav',
+    MSG_PLUGIN_SETTINGS_RESET = 'prst',
+    MSG_PLUGIN_SETTINGS_CANCEL = 'pcnl',
+
     // Posted by ActionRunner's background threads (see ActionRunner.h).
     MSG_ACTION_OUTPUT = 'aout',  // carries a "text" string
     MSG_ACTION_DONE = 'adon',    // carries an "error" string, empty on success

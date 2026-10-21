@@ -73,6 +73,7 @@ HAIKU_GUI_OBJS   := \
 	$(BUILD_DIR)/haiku/MainWindow.o \
 	$(BUILD_DIR)/haiku/ActionRunner.o \
 	$(BUILD_DIR)/haiku/OutputView.o \
+	$(BUILD_DIR)/haiku/PluginSettingsWindow.o \
 	$(CORE_OBJS)
 HAIKU_GUI_TARGET := $(BUILD_DIR)/VSTBridge
 HAIKU_RDEF       := VSTBridge.rdef

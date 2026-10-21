@@ -21,8 +21,11 @@
 
 #include <filesystem>
 #include <functional>
+#include <string>
+#include <vector>
 
 #include "../config.h"
+#include "../files.h"
 
 class ActionRunner;
 class BButton;
@@ -34,6 +37,14 @@ class BTextControl;
 class OutputView;
 
 namespace fs = std::filesystem;
+
+// One plug-in in the Plugins tab
+struct PluginRow {
+    Plugin plugin;
+    std::string name;
+    // Whether the plug-in has its own section in vstbridge.toml
+    bool customized;
+};
 
 // The whole GUI: one window with a tab per vstbridgectl subcommand.
 //
@@ -57,10 +68,18 @@ class MainWindow : public BWindow {
     BView* BuildStatusTab();
     BView* BuildSettingsTab();
     BView* BuildBlacklistTab();
+    BView* BuildPluginsTab();
 
     void RefreshDirectoryList();
     void RefreshBlacklistList();
     void RefreshSettings();
+
+    // Lists the plug-ins in the plugin directories on a background thread,
+    // since that reads every plug-in file. Does nothing while a scan runs.
+    void StartPluginScan();
+    void FinishPluginScan(const BMessage* message);
+    void UpdatePluginItem(int32 index);
+    void ConfigurePlugin(int32 index);
 
     // Reloads the config from disk, reporting a read failure with an alert.
     void ReloadConfig();
@@ -114,6 +133,15 @@ class MainWindow : public BWindow {
     BListView* m_blacklist_list;
     BTextControl* m_blacklist_path;
     BFilePanel* m_blacklist_panel;
+
+    // Plugins tab. The rows are filled in by the scanning thread's message.
+    BView* m_plugins_tab;
+    BListView* m_plugin_list;
+    BButton* m_plugin_refresh;
+    BStringView* m_plugin_status;
+    std::vector<PluginRow> m_plugins;
+    bool m_plugins_scanning;
+    bool m_plugins_loaded;
 
     // Non-null exactly while a background action is running, along with the
     // button to re-enable and the transcript to append to when it finishes.

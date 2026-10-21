@@ -36,14 +36,21 @@
 #include <TabView.h>
 #include <TextControl.h>
 
+#include <algorithm>
+#include <cctype>
 #include <exception>
+#include <memory>
+#include <optional>
 #include <string>
+#include <thread>
 
 #include "../actions.h"
 #include "../actions/blacklist.h"
+#include "../plugin_config.h"
 #include "ActionRunner.h"
 #include "Messages.h"
 #include "OutputView.h"
+#include "PluginSettingsWindow.h"
 
 // Shows the path a lookup would use, or the reason it could not be worked out.
 // The location helpers throw when find_directory() fails, which is worth
@@ -63,6 +70,59 @@ static BStringView* make_location_row(const char* name) {
     view->SetExplicitAlignment(
         BAlignment(B_ALIGN_LEFT, B_ALIGN_VERTICAL_CENTER));
     return view;
+}
+
+// Tells the window when the Plugins tab is selected, so the plug-in list is
+// only scanned once someone looks at it. Clicks, the back/forward mouse
+// buttons and the keyboard all select through the virtual Select(int32)
+// (TabView.cpp, BTabView::MouseDown and BTabView::KeyDown).
+class PluginsAwareTabView : public BTabView {
+   public:
+    explicit PluginsAwareTabView(const char* name)
+        : BTabView(name, B_WIDTH_FROM_LABEL), m_watched(NULL) {}
+
+    void SetWatchedView(BView* view) { m_watched = view; }
+
+    void Select(int32 index) override {
+        BTabView::Select(index);
+
+        BTab* tab = TabAt(Selection());
+        if (m_watched != NULL && tab != NULL && tab->View() == m_watched &&
+            Window() != NULL)
+            Window()->PostMessage(MSG_PLUGINS_TAB_SHOWN);
+    }
+
+   private:
+    BView* m_watched;
+};
+
+static BString plugin_item_text(const PluginRow& row) {
+    BString text(row.name.c_str());
+    text << "  (" << plugin_format_name(row.plugin) << ")";
+    if (row.customized)
+        text << "  \xe2\x80\x94  custom settings";
+    return text;
+}
+
+static const VstbridgeFiles* try_get_files(
+    const Config& config,
+    std::optional<VstbridgeFiles>& storage) {
+    try {
+        storage = config.files();
+        return &*storage;
+    } catch (const std::exception&) {
+        return NULL;
+    }
+}
+
+static bool has_custom_settings(const Plugin& plugin,
+                                const Config& config,
+                                const VstbridgeFiles* files) {
+    try {
+        return locate_plugin_config(plugin, config, files).has_own_section;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 MainWindow::MainWindow()
@@ -93,12 +153,18 @@ MainWindow::MainWindow()
       m_blacklist_list(NULL),
       m_blacklist_path(NULL),
       m_blacklist_panel(NULL),
+      m_plugins_tab(NULL),
+      m_plugin_list(NULL),
+      m_plugin_refresh(NULL),
+      m_plugin_status(NULL),
+      m_plugins_scanning(false),
+      m_plugins_loaded(false),
       m_runner(NULL),
       m_busy_button(NULL),
       m_busy_output(NULL) {
     ReloadConfig();
 
-    BTabView* tabs = new BTabView("tabs", B_WIDTH_FROM_LABEL);
+    PluginsAwareTabView* tabs = new PluginsAwareTabView("tabs");
     tabs->SetBorder(B_NO_BORDER);
     // BTab takes its label from the view's name (TabView.cpp, BTab::BTab).
     tabs->AddTab(BuildDirectoriesTab());
@@ -106,6 +172,8 @@ MainWindow::MainWindow()
     tabs->AddTab(BuildStatusTab());
     tabs->AddTab(BuildSettingsTab());
     tabs->AddTab(BuildBlacklistTab());
+    tabs->AddTab(BuildPluginsTab());
+    tabs->SetWatchedView(m_plugins_tab);
 
     BLayoutBuilder::Group<>(this, B_VERTICAL, 0).Add(tabs);
 
@@ -311,6 +379,43 @@ BView* MainWindow::BuildBlacklistTab() {
     return root;
 }
 
+BView* MainWindow::BuildPluginsTab() {
+    BGroupView* root = new BGroupView("Plugins", B_VERTICAL);
+
+    BStringView* hint = new BStringView(
+        "hint",
+        "Per-plug-in settings such as Wine DLL overrides, stored in "
+        "vstbridge.toml.");
+
+    m_plugin_list = new BListView("plugins", B_SINGLE_SELECTION_LIST);
+    // Double-click and Enter invoke the list; BListView::AttachedToWindow
+    // makes the window the target.
+    m_plugin_list->SetInvocationMessage(new BMessage(MSG_PLUGIN_CONFIGURE));
+    BScrollView* list_scroll = new BScrollView(
+        "plugins_scroll", m_plugin_list, 0, false, true, B_FANCY_BORDER);
+
+    BButton* configure =
+        new BButton("configure", "Configure" B_UTF8_ELLIPSIS,
+                    new BMessage(MSG_PLUGIN_CONFIGURE));
+    m_plugin_refresh =
+        new BButton("refresh", "Refresh", new BMessage(MSG_PLUGINS_REFRESH));
+    m_plugin_status = new BStringView("plugin_status", "");
+
+    BLayoutBuilder::Group<>(root)
+        .SetInsets(B_USE_WINDOW_INSETS)
+        .Add(hint)
+        .Add(list_scroll)
+        .AddGroup(B_HORIZONTAL)
+        .Add(configure)
+        .Add(m_plugin_refresh)
+        .Add(m_plugin_status)
+        .AddGlue()
+        .End();
+
+    m_plugins_tab = root;
+    return root;
+}
+
 // ─── Refreshing ─────────────────────────────────────────────────────────────
 
 void MainWindow::RefreshDirectoryList() {
@@ -345,6 +450,132 @@ void MainWindow::ReloadConfig() {
     } catch (const std::exception& e) {
         ShowError("Could not read the configuration", e.what());
     }
+}
+
+void MainWindow::StartPluginScan() {
+    if (m_plugins_scanning)
+        return;
+
+    m_plugins_scanning = true;
+    m_plugins_loaded = true;
+    m_plugin_refresh->SetEnabled(false);
+    m_plugin_status->SetText("Scanning" B_UTF8_ELLIPSIS);
+
+    // The thread works on its own copy of the config, so the window can keep
+    // going. If the window is gone by the time it finishes, SendMessage()
+    // fails and the rows are freed here; a reply that arrives while the window
+    // quits is lost along with the window.
+    std::thread([target = BMessenger(this), config = m_config]() {
+        auto rows = std::make_unique<std::vector<PluginRow>>();
+        std::string error;
+        try {
+            std::optional<VstbridgeFiles> files_storage;
+            const VstbridgeFiles* files = try_get_files(config, files_storage);
+
+            for (const auto& [dir, results] : config.search_directories()) {
+                for (const auto& plugin : results.plugins) {
+                    rows->push_back(PluginRow{
+                        plugin, plugin_display_name(plugin),
+                        has_custom_settings(plugin, config, files)});
+                }
+            }
+
+            std::sort(rows->begin(), rows->end(),
+                      [](const PluginRow& a, const PluginRow& b) {
+                          return std::lexicographical_compare(
+                              a.name.begin(), a.name.end(), b.name.begin(),
+                              b.name.end(), [](unsigned char x, unsigned char y) {
+                                  return std::tolower(x) < std::tolower(y);
+                              });
+                      });
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
+
+        BMessage message(MSG_PLUGINS_SCANNED);
+        message.AddPointer("rows", rows.get());
+        message.AddString("error", error.c_str());
+        if (target.SendMessage(&message) == B_OK)
+            rows.release();
+    }).detach();
+}
+
+void MainWindow::FinishPluginScan(const BMessage* message) {
+    std::unique_ptr<std::vector<PluginRow>> rows;
+    void* pointer = NULL;
+    if (message->FindPointer("rows", &pointer) == B_OK && pointer != NULL)
+        rows.reset(static_cast<std::vector<PluginRow>*>(pointer));
+
+    m_plugins_scanning = false;
+    m_plugin_refresh->SetEnabled(true);
+
+    if (rows)
+        m_plugins = std::move(*rows);
+
+    // MakeEmpty() doesn't free the items (ListView.cpp), so remove them one
+    // by one
+    for (int32 i = m_plugin_list->CountItems() - 1; i >= 0; i--)
+        delete m_plugin_list->RemoveItem(i);
+    for (const auto& row : m_plugins)
+        m_plugin_list->AddItem(new BStringItem(plugin_item_text(row).String()));
+
+    BString status;
+    if (m_plugins.empty())
+        status << "No plug-ins found in the plug-in directories.";
+    else
+        status << m_plugins.size()
+               << (m_plugins.size() == 1 ? " plug-in" : " plug-ins");
+    m_plugin_status->SetText(status.String());
+
+    const char* error = NULL;
+    if (message->FindString("error", &error) == B_OK && error != NULL &&
+        error[0] != '\0') {
+        ShowError("Could not list the plug-ins", error);
+    }
+}
+
+void MainWindow::UpdatePluginItem(int32 index) {
+    if (index < 0 || static_cast<size_t>(index) >= m_plugins.size())
+        return;
+
+    std::optional<VstbridgeFiles> files_storage;
+    const VstbridgeFiles* files = try_get_files(m_config, files_storage);
+    PluginRow& row = m_plugins[index];
+    row.customized = has_custom_settings(row.plugin, m_config, files);
+
+    BStringItem* item =
+        dynamic_cast<BStringItem*>(m_plugin_list->ItemAt(index));
+    if (item != NULL) {
+        item->SetText(plugin_item_text(row).String());
+        m_plugin_list->InvalidateItem(index);
+    }
+}
+
+void MainWindow::ConfigurePlugin(int32 index) {
+    if (index < 0 || static_cast<size_t>(index) >= m_plugins.size())
+        return;
+
+    const PluginRow& row = m_plugins[index];
+    std::optional<VstbridgeFiles> files_storage;
+    const VstbridgeFiles* files = try_get_files(m_config, files_storage);
+
+    // Reading the file here, before a window opens, means a vstbridge.toml
+    // that can't be parsed is reported instead of being overwritten
+    PluginConfigTarget target;
+    PluginOptions options;
+    try {
+        target = locate_plugin_config(row.plugin, m_config, files);
+        options = read_plugin_options(target);
+    } catch (const std::exception& e) {
+        ShowError("Could not read the plug-in's settings", e.what());
+        return;
+    }
+
+    PluginSettingsWindow* window = new PluginSettingsWindow(
+        this, BMessenger(this), index, row.name.c_str(),
+        std::holds_alternative<Vst3Module>(row.plugin), std::move(target),
+        std::move(options));
+    window->Show();
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -448,6 +679,8 @@ static bool touches_config(uint32 what) {
         case MSG_BL_ADD_TYPED:
         case MSG_BL_REMOVE:
         case MSG_BL_CLEAR:
+        case MSG_PLUGINS_REFRESH:
+        case MSG_PLUGIN_CONFIGURE:
             return true;
         default:
             return false;
@@ -657,6 +890,36 @@ void MainWindow::MessageReceived(BMessage* message) {
             } catch (const std::exception& e) {
                 ShowError("Could not clear the blacklist", e.what());
             }
+            break;
+        }
+
+        case MSG_PLUGINS_TAB_SHOWN:
+            // Reading the config while an action owns it isn't safe, so the
+            // first scan waits until the user presses Refresh afterwards
+            if (!m_plugins_loaded && m_runner == NULL)
+                StartPluginScan();
+            else if (!m_plugins_loaded)
+                m_plugin_status->SetText(
+                    "Press Refresh once the running command has finished.");
+            break;
+
+        case MSG_PLUGINS_REFRESH:
+            StartPluginScan();
+            break;
+
+        case MSG_PLUGINS_SCANNED:
+            FinishPluginScan(message);
+            break;
+
+        case MSG_PLUGIN_CONFIGURE:
+            ConfigurePlugin(m_plugin_list->CurrentSelection());
+            break;
+
+        case MSG_PLUGIN_SETTINGS_CHANGED: {
+            // The next Refresh shows it if an action owns the config now
+            int32 index = -1;
+            if (m_runner == NULL && message->FindInt32("index", &index) == B_OK)
+                UpdatePluginItem(index);
             break;
         }
 
