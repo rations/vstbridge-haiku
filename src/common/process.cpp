@@ -17,7 +17,10 @@
 #include "process.h"
 
 #include <cassert>
+#include <cerrno>
+#include <chrono>
 #include <iostream>
+#include <thread>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -274,7 +277,27 @@ void Process::Handle::detach() noexcept {
 }
 
 void Process::Handle::terminate() const noexcept {
+    // SIGINT lets Wine shut the host down cleanly, running the plugin's DLL
+    // detach code. Some plugins never finish that (an iLok-protected one under
+    // FEX waited for a lock of a thread Wine had already ended), and the
+    // plugin host would wait forever, so after a while the host gets SIGKILL.
+    using namespace std::chrono_literals;
+    constexpr auto timeout = 5s;
+    constexpr auto interval = 50ms;
+
     kill(pid_, SIGINT);
+    for (auto waited = 0ms; waited < timeout; waited += interval) {
+        int status = 0;
+        const pid_t result = waitpid(pid_, &status, WNOHANG);
+        if (result == pid_ || (result < 0 && errno != EINTR)) {
+            // Exited and reaped, or already reaped
+            return;
+        }
+
+        std::this_thread::sleep_for(interval);
+    }
+
+    kill(pid_, SIGKILL);
     wait();
 }
 
